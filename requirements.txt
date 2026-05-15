@@ -1,0 +1,8 @@
+streamlit>=1.28
+pandas
+Pillow
+folium
+streamlit-folium
+fpdf2
+twilio
+requests
