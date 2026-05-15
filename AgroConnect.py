@@ -1,4 +1,4 @@
-# app.py – AgriConnect Full corrigé (Streamlit + SQLite + APIs externes)
+# app.py – AgriConnect complet (58 wilayas, annonces test, publicité)
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -15,6 +15,68 @@ from datetime import datetime, date
 from PIL import Image
 import folium
 from streamlit_folium import st_folium
+
+# ---------- Données des wilayas et communes ----------
+WILAYAS = {
+    "01 - Adrar": ["Adrar", "Reggane", "Timimoun"],
+    "02 - Chlef": ["Chlef", "Ténès", "Abou El Hassan"],
+    "03 - Laghouat": ["Laghouat", "Aflou", "Ksar El Hirane"],
+    "04 - Oum El Bouaghi": ["Oum El Bouaghi", "Aïn Beïda", "Souk Naamane"],
+    "05 - Batna": ["Batna", "Timgad", "Arris"],
+    "06 - Béjaïa": ["Béjaïa", "Akbou", "Kherrata"],
+    "07 - Biskra": ["Biskra", "Tolga", "Sidi Okba"],
+    "08 - Béchar": ["Béchar", "Abadla", "Taghit"],
+    "09 - Blida": ["Blida", "Boufarik", "Mouzaïa"],
+    "10 - Bouira": ["Bouira", "Lakhdaria", "Aïn Bessem"],
+    "11 - Tamanrasset": ["Tamanrasset", "In Salah", "Abalessa"],
+    "12 - Tébessa": ["Tébessa", "Bir el-Ater", "El Ogla"],
+    "13 - Tlemcen": ["Tlemcen", "Maghnia", "Ghazaouet"],
+    "14 - Tiaret": ["Tiaret", "Sougueur", "Frenda"],
+    "15 - Tizi Ouzou": ["Tizi Ouzou", "Azazga", "Larbaâ Nath Irathen"],
+    "16 - Alger": ["Alger Centre", "Bab El Oued", "Hussein Dey", "Bir Mourad Raïs", "El Harrach"],
+    "17 - Djelfa": ["Djelfa", "Messaâd", "El Idrissia"],
+    "18 - Jijel": ["Jijel", "Taher", "El Milia"],
+    "19 - Sétif": ["Sétif", "El Eulma", "Aïn Azel"],
+    "20 - Saïda": ["Saïda", "El Hassasna", "Youb"],
+    "21 - Skikda": ["Skikda", "Azzaba", "Collo"],
+    "22 - Sidi Bel Abbès": ["Sidi Bel Abbès", "Sidi Lahcene", "Telagh"],
+    "23 - Annaba": ["Annaba", "El Hadjar", "Berrahal"],
+    "24 - Guelma": ["Guelma", "Hammam Debagh", "Oued Zenati"],
+    "25 - Constantine": ["Constantine", "El Khroub", "Aïn Abid"],
+    "26 - Médéa": ["Médéa", "Berrouaghia", "Tablat"],
+    "27 - Mostaganem": ["Mostaganem", "Aïn Tedles", "Sidi Ali"],
+    "28 - M'Sila": ["M'Sila", "Bou Saâda", "Magra"],
+    "29 - Mascara": ["Mascara", "Sig", "Ghriss"],
+    "30 - Ouargla": ["Ouargla", "Hassi Messaoud", "Touggourt"],
+    "31 - Oran": ["Oran", "Es Sénia", "Bir El Djir"],
+    "32 - El Bayadh": ["El Bayadh", "Bougtob", "El Abiodh Sidi Cheikh"],
+    "33 - Illizi": ["Illizi", "Djanet", "Bordj Omar Driss"],
+    "34 - Bordj Bou Arreridj": ["Bordj Bou Arreridj", "Ras El Oued", "Bordj Ghedir"],
+    "35 - Boumerdès": ["Boumerdès", "Dellys", "Khemis El Khechna"],
+    "36 - El Tarf": ["El Tarf", "Bouhadjar", "El Kala"],
+    "37 - Tindouf": ["Tindouf", "Oum El Assel"],
+    "38 - Tissemsilt": ["Tissemsilt", "Bordj Bounaama", "Lardjem"],
+    "39 - El Oued": ["El Oued", "Guemar", "Robbah"],
+    "40 - Khenchela": ["Khenchela", "Kaïs", "Babar"],
+    "41 - Souk Ahras": ["Souk Ahras", "Taoura", "M'daourouch"],
+    "42 - Tipaza": ["Tipaza", "Bou Ismaïl", "Hadjout"],
+    "43 - Mila": ["Mila", "Telerghma", "Grarem Gouga"],
+    "44 - Aïn Defla": ["Aïn Defla", "Khemis Miliana", "Djendel"],
+    "45 - Naâma": ["Naâma", "Mecheria", "Aïn Sefra"],
+    "46 - Aïn Témouchent": ["Aïn Témouchent", "Beni Saf", "El Malah"],
+    "47 - Ghardaïa": ["Ghardaïa", "Metlili", "Berriane"],
+    "48 - Relizane": ["Relizane", "Zemoura", "Oued Rhiou"],
+    "49 - Timimoun": ["Timimoun", "Aougrout", "Charouine"],
+    "50 - Bordj Badji Mokhtar": ["Bordj Badji Mokhtar", "Timiaouine"],
+    "51 - Ouled Djellal": ["Ouled Djellal", "Sidi Khaled", "Besbes"],
+    "52 - Béni Abbès": ["Béni Abbès", "Kerzaz", "Tabelbala"],
+    "53 - In Salah": ["In Salah", "Foggaret Ezzaouia"],
+    "54 - In Guezzam": ["In Guezzam", "Tin Zaouatine"],
+    "55 - Touggourt": ["Touggourt", "Témacine", "Megarine"],
+    "56 - Djanet": ["Djanet", "Bordj El Haouas"],
+    "57 - El M'ghair": ["El M'ghair", "Djamaa", "Sidi Amrane"],
+    "58 - El Meniaa": ["El Meniaa", "Hassi Fehal", "Hassi Gara"]
+}
 
 # ---------- Configuration multilingue ----------
 LANGUAGES = {
@@ -88,7 +150,7 @@ def _(text):
 st.set_page_config(page_title="AgriConnect", layout="wide", initial_sidebar_state="expanded")
 DB_FILE = "agriconnect.db"
 
-# ---------- Initialisation de la session state (CRUCIAL) ----------
+# ---------- Initialisation de la session state ----------
 if "user" not in st.session_state:
     st.session_state.user = None
 if "page" not in st.session_state:
@@ -104,7 +166,7 @@ if "review_announce" not in st.session_state:
 if "contract_announce" not in st.session_state:
     st.session_state.contract_announce = None
 
-# ---------- Initialisation base de données améliorée ----------
+# ---------- Initialisation base de données (avec annonces test) ----------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -116,6 +178,7 @@ def init_db():
         profile_type TEXT,
         is_verified INTEGER DEFAULT 0,
         wilaya TEXT,
+        commune TEXT,
         location_lat REAL,
         location_lon REAL,
         documents TEXT,
@@ -130,6 +193,7 @@ def init_db():
         price REAL,
         unit TEXT,
         wilaya TEXT,
+        commune TEXT,
         lat REAL,
         lon REAL,
         data TEXT,
@@ -138,6 +202,26 @@ def init_db():
         video_url TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id INTEGER,
+        receiver_id INTEGER,
+        announcement_id INTEGER,
+        content TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sender_id) REFERENCES users(id),
+        FOREIGN KEY (receiver_id) REFERENCES users(id)
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        announcement_id INTEGER,
+        reviewer_id INTEGER,
+        rating INTEGER,
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (announcement_id) REFERENCES announcements(id),
+        FOREIGN KEY (reviewer_id) REFERENCES users(id)
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS contracts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,6 +234,31 @@ def init_db():
         status TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    # Création d'un utilisateur test et d'annonces test si la table est vide
+    existing = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if existing == 0:
+        # Utilisateur admin/test
+        c.execute("INSERT INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
+                  ("Ali Ferme", "0555123456", hashlib.sha256("123456".encode()).hexdigest(), "Agriculteur", 1, "16 - Alger", "Bir Mourad Raïs"))
+        user_id = c.lastrowid
+        # Annonces test
+        annonces_test = [
+            ("market", "Pommes de terre fraîches", "Variété Spunta, 10 tonnes disponibles", 45, "DA/kg", "39 - El Oued", "Guemar",
+             json.dumps({"product_type": "Légumes", "quantity": 10000})),
+            ("grazing", "Chaumes de blé à louer", "50 hectares, eau disponible, période mai-juillet", 200, "DA/tête/jour", "14 - Tiaret", "Sougueur",
+             json.dumps({"area_ha": 50, "cover_type": "Chaume", "water": "Oui", "start_date": "2026-05-01", "end_date": "2026-07-31", "max_animals": 100})),
+            ("fertilizer", "Fumier ovin de qualité", "5 tonnes de fumier composté", 3000, "DA/tonne", "17 - Djelfa", "Messaâd",
+             json.dumps({"fertilizer_type": "Fumier ovin", "quantity_tons": 5})),
+            ("transport", "Camion frigorifique disponible", "Capacité 10 tonnes, trajets Alger-Médéa", 8000, "DA/voyage", "16 - Alger", "El Harrach",
+             json.dumps({"vehicle_type": "Frigorifique", "capacity": 10})),
+            ("pollination", "Location de ruches pour pollinisation", "20 ruches, race locale, déplacement Béjaïa-Batna", 5000, "DA/ruche/semaine", "06 - Béjaïa", "Akbou",
+             json.dumps({"hive_count": 20, "bee_race": "Locale", "zone": "Béjaïa - Batna"})),
+            ("equipment", "Tracteur à louer", "Tracteur Massey Ferguson 2020, bon état", 5000, "DA/jour", "31 - Oran", "Es Sénia",
+             json.dumps({"offer_type": "Location", "equipment_type": "Tracteur", "brand": "Massey Ferguson", "model": "MF 2020", "year": 2020, "state": "Bon", "rental_period": "Jour", "availability": "Toute l'année"})),
+        ]
+        for typ, titre, desc, prix, unit, wilaya, commune, data in annonces_test:
+            c.execute("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, commune, data) VALUES (?,?,?,?,?,?,?,?,?)",
+                      (user_id, typ, titre, desc, prix, unit, wilaya, commune, data))
     conn.commit()
     conn.close()
 
@@ -166,7 +275,7 @@ def query_db(query, params=(), fetch=True):
         conn.commit()
         conn.close()
 
-# ---------- Utilitaires ----------
+# ---------- Utilitaires (inchangés) ----------
 def hash_password(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
@@ -178,18 +287,6 @@ def image_to_base64(img, max_size=(800,600)):
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=60)
             return base64.b64encode(buffered.getvalue()).decode()
-        except:
-            return None
-    return None
-
-def video_to_base64(file):
-    if file is not None:
-        try:
-            bytes_data = file.read()
-            if len(bytes_data) > 10*1024*1024:
-                st.warning("Vidéo trop volumineuse (>10 Mo), compression ignorée")
-                return None
-            return base64.b64encode(bytes_data).decode()
         except:
             return None
     return None
@@ -247,6 +344,15 @@ def display_images(images_str):
             if img_b64:
                 cols[i].image(f"data:image/jpeg;base64,{img_b64}", use_column_width=True)
 
+# ---------- Espace publicitaire ----------
+def show_ad_space():
+    # Bannière publicitaire factice (image placeholder avec lien)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📢 Publicité")
+    st.sidebar.image("https://placehold.co/300x150?text=Votre+Pub+Ici", use_column_width=True)
+    st.sidebar.markdown("[Visitez notre sponsor](https://example.com)")
+    st.sidebar.markdown("---")
+
 # ---------- Pages d'authentification ----------
 def login_page():
     st.title(_("login"))
@@ -267,12 +373,13 @@ def register_page():
     phone = st.text_input("Téléphone")
     password = st.text_input("Mot de passe", type="password")
     profile = st.selectbox("Profil", ["Agriculteur","Éleveur","Apiculteur","Transporteur","Acheteur","ANEM","Travailleur"])
-    wilaya = st.selectbox("Wilaya", ["Alger","Oran","Constantine","El Oued","Djelfa","Batna","Biskra","Tiaret","Béjaïa","Médéa","Sétif","Tlemcen"])
+    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()))
+    commune = st.selectbox("Commune", WILAYAS[wilaya])
     if st.button("S'inscrire"):
         if name and phone and password:
             try:
-                query_db("INSERT INTO users (name, phone, password, profile_type, wilaya) VALUES (?,?,?,?,?)",
-                         (name, phone, hash_password(password), profile, wilaya), fetch=False)
+                query_db("INSERT INTO users (name, phone, password, profile_type, wilaya, commune) VALUES (?,?,?,?,?,?)",
+                         (name, phone, hash_password(password), profile, wilaya, commune), fetch=False)
                 st.success("Compte créé, connectez-vous.")
             except sqlite3.IntegrityError:
                 st.error("Ce numéro est déjà utilisé")
@@ -300,7 +407,7 @@ def home_page():
     else:
         st.info(_("no_announces"))
 
-# ---------- Module générique (utilisé pour tous les types d'annonces) ----------
+# ---------- Module générique avec communes ----------
 def generic_announce_page(module_type, fields_config, filters):
     tab1, tab2, tab3 = st.tabs(["📋 " + _("list"), "➕ " + _("publish"), "🗺️ " + _("map")])
     with tab1:
@@ -308,7 +415,7 @@ def generic_announce_page(module_type, fields_config, filters):
         filter_vals = []
         for i, f in enumerate(filters):
             if f == "wilaya":
-                val = col_filt[i].selectbox("Wilaya", ["Toutes"] + ["Alger","Oran","Constantine","El Oued","Djelfa","Batna","Biskra","Tiaret","Béjaïa","Médéa"])
+                val = col_filt[i].selectbox("Wilaya", ["Toutes"] + list(WILAYAS.keys()))
                 if val != "Toutes": filter_vals.append(("wilaya", val))
             elif f == "price_max":
                 max_price = col_filt[i].number_input("Prix max", min_value=0, step=100)
@@ -338,7 +445,7 @@ def generic_announce_page(module_type, fields_config, filters):
                 col1, col2, col3 = st.columns([3,1,1])
                 col1.markdown(f"### {a['title']}")
                 col1.write(a['description'])
-                col1.write(f"📍 {a['wilaya']} | 💰 {a['price']} {a['unit']} | 🕒 {a['created_at']}")
+                col1.write(f"📍 {a['wilaya']} - {a['commune']} | 💰 {a['price']} {a['unit']} | 🕒 {a['created_at']}")
                 col1.write(f"👤 {a['author']}")
                 if a['images']:
                     display_images(a['images'])
@@ -372,7 +479,8 @@ def generic_announce_page(module_type, fields_config, filters):
             desc = st.text_area("Description")
             price = st.number_input("Prix", min_value=0.0)
             unit = st.text_input("Unité (ex: DA/kg, DA/jour)")
-            wilaya = st.selectbox("Wilaya", ["Alger","Oran","Constantine","El Oued","Djelfa","Batna","Biskra","Tiaret","Béjaïa","Médéa"])
+            wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()))
+            commune = st.selectbox("Commune", WILAYAS[wilaya])
             lat = st.number_input("Latitude (optionnel)", value=0.0, step=0.01)
             lon = st.number_input("Longitude (optionnel)", value=0.0, step=0.01)
             extra_data = {}
@@ -410,8 +518,8 @@ def generic_announce_page(module_type, fields_config, filters):
                         with open(out_path, "rb") as f:
                             vid_b64 = base64.b64encode(f.read()).decode()
                     data_json = json.dumps(extra_data)
-                    query_db("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, lat, lon, data, images, video_base64, video_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (st.session_state.user['id'], module_type, title, desc, price, unit, wilaya, lat, lon, data_json, img_str, vid_b64, video_url), fetch=False)
+                    query_db("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, commune, lat, lon, data, images, video_base64, video_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (st.session_state.user['id'], module_type, title, desc, price, unit, wilaya, commune, lat, lon, data_json, img_str, vid_b64, video_url), fetch=False)
                     if st.session_state.user.get('phone'):
                         send_sms(st.session_state.user['phone'], "Votre annonce a été publiée sur AgriConnect!")
                     st.success("Annonce publiée !")
@@ -425,7 +533,7 @@ def generic_announce_page(module_type, fields_config, filters):
                 folium.Marker([a['lat'], a['lon']], popup=a['title']).add_to(m)
         st_folium(m, width=700)
 
-# ---------- Pages spécifiques ----------
+# ---------- Pages spécifiques (inchangées sauf paramètres) ----------
 def market_page():
     fields = [
         ("product_type", "Type de produit", ["Légumes","Fruits","Céréales","Bétail","Miel"]),
@@ -494,9 +602,16 @@ def equipment_page():
     filters = ["wilaya", "price_max", "equipment_type", "offer_type"]
     generic_announce_page("equipment", fields, filters)
 
-# ---------- Messagerie ----------
+# ---------- Messagerie, évaluations, contrats, vérification, profil (inchangés) ----------
+# (Les fonctions restent les mêmes, juste les conditions d'accès à st.session_state.user modifiées)
+
 def messages_page():
     st.title(_("messages"))
+    if st.session_state.user is None:
+        st.warning("Connectez-vous")
+        return
+    # ... (copie conforme du code précédent pour messages_page)
+    # On va mettre le code complet pour éviter les erreurs
     if st.session_state.msg_to is not None and st.session_state.msg_to != st.session_state.user['id']:
         other_user = query_db("SELECT name FROM users WHERE id=?", (st.session_state.msg_to,))
         if other_user:
@@ -528,9 +643,11 @@ def messages_page():
                 st.session_state.msg_to = annonce[0]['user_id']
                 st.rerun()
 
-# ---------- Évaluations ----------
 def reviews_page():
     st.title(_("reviews"))
+    if st.session_state.user is None:
+        st.warning("Connectez-vous")
+        return
     if st.session_state.review_announce:
         annonce = query_db("SELECT * FROM announcements WHERE id=?", (st.session_state.review_announce,))
         if annonce:
@@ -541,7 +658,7 @@ def reviews_page():
                 query_db("INSERT INTO reviews (announcement_id, reviewer_id, rating, comment) VALUES (?,?,?,?)",
                          (st.session_state.review_announce, st.session_state.user['id'], rating, comment), fetch=False)
                 st.success("Merci !")
-                del st.session_state.review_announce
+                st.session_state.review_announce = None
                 st.rerun()
     else:
         st.write("Évaluations sur mes annonces")
@@ -554,9 +671,11 @@ def reviews_page():
         else:
             st.info("Aucune annonce à évaluer.")
 
-# ---------- Contrats ----------
 def contract_page():
     st.title(_("contract"))
+    if st.session_state.user is None:
+        st.warning("Connectez-vous")
+        return
     if st.session_state.contract_announce:
         annonce = query_db("SELECT * FROM announcements WHERE id=?", (st.session_state.contract_announce,))[0]
         owner = query_db("SELECT * FROM users WHERE id=?", (annonce['user_id'],))[0]
@@ -574,9 +693,11 @@ def contract_page():
                      (annonce['id'], renter['id'], owner['id'], start.isoformat(), end.isoformat(), terms, "active"), fetch=False)
             st.success("Contrat créé!")
 
-# ---------- Vérification ----------
 def verification_page():
     st.title(_("verification"))
+    if st.session_state.user is None:
+        st.warning("Connectez-vous")
+        return
     st.write("Téléchargez votre pièce d'identité ou registre de commerce.")
     doc = st.file_uploader("Document", type=["jpg","jpeg","png","pdf"])
     if doc and st.button("Envoyer"):
@@ -587,14 +708,17 @@ def verification_page():
         query_db("UPDATE users SET documents=? WHERE id=?", (doc_b64, st.session_state.user['id']), fetch=False)
         st.success("Document soumis pour vérification.")
 
-# ---------- Profil ----------
 def profile_page():
     st.title(_("profile"))
+    if st.session_state.user is None:
+        st.warning("Connectez-vous")
+        return
     user = st.session_state.user
     st.write(f"**Nom :** {user['name']}")
     st.write(f"**Téléphone :** {user['phone']}")
     st.write(f"**Profil :** {user['profile_type']}")
     st.write(f"**Wilaya :** {user['wilaya']}")
+    st.write(f"**Commune :** {user.get('commune', 'Non spécifiée')}")
     st.write(f"**Vérifié :** {'✅' if user['is_verified'] else '❌'}")
     if st.button("Demander la vérification"):
         query_db("UPDATE users SET is_verified=1 WHERE id=?", (user['id'],), fetch=False)
@@ -633,6 +757,7 @@ def main():
     init_db()
     setup_language()
     st.sidebar.title(_("app_name"))
+    show_ad_space()  # <-- Publicité
     if st.session_state.user is not None:
         st.sidebar.write(f"👤 {st.session_state.user['name']} ({st.session_state.user['profile_type']})")
         nav_items = [
