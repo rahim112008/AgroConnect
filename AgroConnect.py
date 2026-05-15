@@ -1,1717 +1,1975 @@
-# app.py – AgriConnect v3.0 (Correction des doublons de clés)
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  AgriConnect v3.0 — La plateforme agricole algérienne de demain ║
+# ║  Fonctionnalités : IA, météo, prix, QR, réputation, urgences    ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
 import streamlit as st
 import sqlite3
 import hashlib
 import json
 import base64
+import os
 import io
 import re
+import math
 import random
-import requests
+import time
 from datetime import datetime, date, timedelta
 from PIL import Image
-import pandas as pd
-import numpy as np
-import folium
-from streamlit_folium import st_folium
-from geopy.distance import geodesic
-import plotly.graph_objects as go
-import plotly.express as px
 
-# ─── Configuration ────────────────────────────────────────────────────────────
+# ── Imports optionnels ────────────────────────────────────────────────────────
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
+try:
+    import qrcode
+    HAS_QR = True
+except ImportError:
+    HAS_QR = False
+
+try:
+    import folium
+    from streamlit_folium import st_folium
+    HAS_FOLIUM = True
+except ImportError:
+    HAS_FOLIUM = False
+
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
+# ── Config ────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AgriConnect",
+    page_title="AgriConnect 🌾",
     page_icon="🌾",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
-DB_FILE = "agriconnect.db"
+DB_FILE = "agriconnect_v3.db"
 
-# ─── 58 Wilayas (identique à l'original) ─────────────────────────────────────
+# ── 58 Wilayas avec coordonnées GPS ──────────────────────────────────────────
 WILAYAS = {
-    "01 - Adrar": ["Adrar", "Reggane", "Timimoun"],
-    "02 - Chlef": ["Chlef", "Ténès", "Abou El Hassan"],
-    "03 - Laghouat": ["Laghouat", "Aflou", "Ksar El Hirane"],
-    "04 - Oum El Bouaghi": ["Oum El Bouaghi", "Aïn Beïda", "Souk Naamane"],
-    "05 - Batna": ["Batna", "Timgad", "Arris"],
-    "06 - Béjaïa": ["Béjaïa", "Akbou", "Kherrata"],
-    "07 - Biskra": ["Biskra", "Tolga", "Sidi Okba"],
-    "08 - Béchar": ["Béchar", "Abadla", "Taghit"],
-    "09 - Blida": ["Blida", "Boufarik", "Mouzaïa"],
-    "10 - Bouira": ["Bouira", "Lakhdaria", "Aïn Bessem"],
-    "11 - Tamanrasset": ["Tamanrasset", "In Salah", "Abalessa"],
-    "12 - Tébessa": ["Tébessa", "Bir el-Ater", "El Ogla"],
-    "13 - Tlemcen": ["Tlemcen", "Maghnia", "Ghazaouet"],
-    "14 - Tiaret": ["Tiaret", "Sougueur", "Frenda"],
-    "15 - Tizi Ouzou": ["Tizi Ouzou", "Azazga", "Larbaâ Nath Irathen"],
-    "16 - Alger": ["Alger Centre", "Bab El Oued", "Hussein Dey", "Bir Mourad Raïs", "El Harrach"],
-    "17 - Djelfa": ["Djelfa", "Messaâd", "El Idrissia"],
-    "18 - Jijel": ["Jijel", "Taher", "El Milia"],
-    "19 - Sétif": ["Sétif", "El Eulma", "Aïn Azel"],
-    "20 - Saïda": ["Saïda", "El Hassasna", "Youb"],
-    "21 - Skikda": ["Skikda", "Azzaba", "Collo"],
-    "22 - Sidi Bel Abbès": ["Sidi Bel Abbès", "Sidi Lahcene", "Telagh"],
-    "23 - Annaba": ["Annaba", "El Hadjar", "Berrahal"],
-    "24 - Guelma": ["Guelma", "Hammam Debagh", "Oued Zenati"],
-    "25 - Constantine": ["Constantine", "El Khroub", "Aïn Abid"],
-    "26 - Médéa": ["Médéa", "Berrouaghia", "Tablat"],
-    "27 - Mostaganem": ["Mostaganem", "Aïn Tedles", "Sidi Ali"],
-    "28 - M'Sila": ["M'Sila", "Bou Saâda", "Magra"],
-    "29 - Mascara": ["Mascara", "Sig", "Ghriss"],
-    "30 - Ouargla": ["Ouargla", "Hassi Messaoud", "Touggourt"],
-    "31 - Oran": ["Oran", "Es Sénia", "Bir El Djir"],
-    "32 - El Bayadh": ["El Bayadh", "Bougtob", "El Abiodh Sidi Cheikh"],
-    "33 - Illizi": ["Illizi", "Djanet", "Bordj Omar Driss"],
-    "34 - Bordj Bou Arreridj": ["Bordj Bou Arreridj", "Ras El Oued", "Bordj Ghedir"],
-    "35 - Boumerdès": ["Boumerdès", "Dellys", "Khemis El Khechna"],
-    "36 - El Tarf": ["El Tarf", "Bouhadjar", "El Kala"],
-    "37 - Tindouf": ["Tindouf", "Oum El Assel"],
-    "38 - Tissemsilt": ["Tissemsilt", "Bordj Bounaama", "Lardjem"],
-    "39 - El Oued": ["El Oued", "Guemar", "Robbah"],
-    "40 - Khenchela": ["Khenchela", "Kaïs", "Babar"],
-    "41 - Souk Ahras": ["Souk Ahras", "Taoura", "M'daourouch"],
-    "42 - Tipaza": ["Tipaza", "Bou Ismaïl", "Hadjout"],
-    "43 - Mila": ["Mila", "Telerghma", "Grarem Gouga"],
-    "44 - Aïn Defla": ["Aïn Defla", "Khemis Miliana", "Djendel"],
-    "45 - Naâma": ["Naâma", "Mecheria", "Aïn Sefra"],
-    "46 - Aïn Témouchent": ["Aïn Témouchent", "Beni Saf", "El Malah"],
-    "47 - Ghardaïa": ["Ghardaïa", "Metlili", "Berriane"],
-    "48 - Relizane": ["Relizane", "Zemoura", "Oued Rhiou"],
-    "49 - Timimoun": ["Timimoun", "Aougrout", "Charouine"],
-    "50 - Bordj Badji Mokhtar": ["Bordj Badji Mokhtar", "Timiaouine"],
-    "51 - Ouled Djellal": ["Ouled Djellal", "Sidi Khaled", "Besbes"],
-    "52 - Béni Abbès": ["Béni Abbès", "Kerzaz", "Tabelbala"],
-    "53 - In Salah": ["In Salah", "Foggaret Ezzaouia"],
-    "54 - In Guezzam": ["In Guezzam", "Tin Zaouatine"],
-    "55 - Touggourt": ["Touggourt", "Témacine", "Megarine"],
-    "56 - Djanet": ["Djanet", "Bordj El Haouas"],
-    "57 - El M'ghair": ["El M'ghair", "Djamaa", "Sidi Amrane"],
-    "58 - El Meniaa": ["El Meniaa", "Hassi Fehal", "Hassi Gara"],
+    "01 - Adrar": {"communes": ["Adrar", "Reggane", "Timimoun"], "lat": 27.87, "lon": -0.29},
+    "02 - Chlef": {"communes": ["Chlef", "Ténès", "Abou El Hassan"], "lat": 36.16, "lon": 1.33},
+    "03 - Laghouat": {"communes": ["Laghouat", "Aflou", "Ksar El Hirane"], "lat": 33.80, "lon": 2.86},
+    "04 - Oum El Bouaghi": {"communes": ["Oum El Bouaghi", "Aïn Beïda"], "lat": 35.87, "lon": 7.11},
+    "05 - Batna": {"communes": ["Batna", "Timgad", "Arris"], "lat": 35.56, "lon": 6.17},
+    "06 - Béjaïa": {"communes": ["Béjaïa", "Akbou", "Kherrata"], "lat": 36.75, "lon": 5.08},
+    "07 - Biskra": {"communes": ["Biskra", "Tolga", "Sidi Okba"], "lat": 34.85, "lon": 5.73},
+    "08 - Béchar": {"communes": ["Béchar", "Abadla", "Taghit"], "lat": 31.62, "lon": -2.22},
+    "09 - Blida": {"communes": ["Blida", "Boufarik", "Mouzaïa"], "lat": 36.47, "lon": 2.83},
+    "10 - Bouira": {"communes": ["Bouira", "Lakhdaria", "Aïn Bessem"], "lat": 36.37, "lon": 3.90},
+    "11 - Tamanrasset": {"communes": ["Tamanrasset", "In Salah"], "lat": 22.79, "lon": 5.52},
+    "12 - Tébessa": {"communes": ["Tébessa", "Bir el-Ater"], "lat": 35.40, "lon": 8.12},
+    "13 - Tlemcen": {"communes": ["Tlemcen", "Maghnia", "Ghazaouet"], "lat": 34.88, "lon": -1.32},
+    "14 - Tiaret": {"communes": ["Tiaret", "Sougueur", "Frenda"], "lat": 35.37, "lon": 1.32},
+    "15 - Tizi Ouzou": {"communes": ["Tizi Ouzou", "Azazga", "Larbaâ Nath Irathen"], "lat": 36.71, "lon": 4.05},
+    "16 - Alger": {"communes": ["Alger Centre", "Bab El Oued", "Hussein Dey", "El Harrach"], "lat": 36.74, "lon": 3.06},
+    "17 - Djelfa": {"communes": ["Djelfa", "Messaâd", "El Idrissia"], "lat": 34.67, "lon": 3.26},
+    "18 - Jijel": {"communes": ["Jijel", "Taher", "El Milia"], "lat": 36.82, "lon": 5.77},
+    "19 - Sétif": {"communes": ["Sétif", "El Eulma", "Aïn Azel"], "lat": 36.19, "lon": 5.41},
+    "20 - Saïda": {"communes": ["Saïda", "El Hassasna", "Youb"], "lat": 34.84, "lon": 0.15},
+    "21 - Skikda": {"communes": ["Skikda", "Azzaba", "Collo"], "lat": 36.88, "lon": 6.90},
+    "22 - Sidi Bel Abbès": {"communes": ["Sidi Bel Abbès", "Telagh"], "lat": 35.19, "lon": -0.63},
+    "23 - Annaba": {"communes": ["Annaba", "El Hadjar", "Berrahal"], "lat": 36.90, "lon": 7.75},
+    "24 - Guelma": {"communes": ["Guelma", "Hammam Debagh"], "lat": 36.46, "lon": 7.43},
+    "25 - Constantine": {"communes": ["Constantine", "El Khroub", "Aïn Abid"], "lat": 36.37, "lon": 6.61},
+    "26 - Médéa": {"communes": ["Médéa", "Berrouaghia", "Tablat"], "lat": 36.27, "lon": 2.75},
+    "27 - Mostaganem": {"communes": ["Mostaganem", "Aïn Tedles"], "lat": 35.93, "lon": 0.09},
+    "28 - M'Sila": {"communes": ["M'Sila", "Bou Saâda", "Magra"], "lat": 35.70, "lon": 4.54},
+    "29 - Mascara": {"communes": ["Mascara", "Sig", "Ghriss"], "lat": 35.40, "lon": 0.14},
+    "30 - Ouargla": {"communes": ["Ouargla", "Hassi Messaoud", "Touggourt"], "lat": 31.95, "lon": 5.32},
+    "31 - Oran": {"communes": ["Oran", "Es Sénia", "Bir El Djir"], "lat": 35.70, "lon": -0.63},
+    "32 - El Bayadh": {"communes": ["El Bayadh", "Bougtob"], "lat": 33.68, "lon": 1.02},
+    "33 - Illizi": {"communes": ["Illizi", "Djanet"], "lat": 26.50, "lon": 8.48},
+    "34 - Bordj Bou Arreridj": {"communes": ["Bordj Bou Arreridj", "Ras El Oued"], "lat": 36.07, "lon": 4.76},
+    "35 - Boumerdès": {"communes": ["Boumerdès", "Dellys"], "lat": 36.77, "lon": 3.47},
+    "36 - El Tarf": {"communes": ["El Tarf", "El Kala"], "lat": 36.77, "lon": 8.31},
+    "37 - Tindouf": {"communes": ["Tindouf", "Oum El Assel"], "lat": 27.67, "lon": -8.15},
+    "38 - Tissemsilt": {"communes": ["Tissemsilt", "Bordj Bounaama"], "lat": 35.61, "lon": 1.81},
+    "39 - El Oued": {"communes": ["El Oued", "Guemar", "Robbah"], "lat": 33.36, "lon": 6.86},
+    "40 - Khenchela": {"communes": ["Khenchela", "Kaïs", "Babar"], "lat": 35.43, "lon": 7.14},
+    "41 - Souk Ahras": {"communes": ["Souk Ahras", "Taoura"], "lat": 36.28, "lon": 7.95},
+    "42 - Tipaza": {"communes": ["Tipaza", "Bou Ismaïl", "Hadjout"], "lat": 36.59, "lon": 2.45},
+    "43 - Mila": {"communes": ["Mila", "Telerghma"], "lat": 36.45, "lon": 6.26},
+    "44 - Aïn Defla": {"communes": ["Aïn Defla", "Khemis Miliana"], "lat": 36.26, "lon": 1.97},
+    "45 - Naâma": {"communes": ["Naâma", "Mecheria", "Aïn Sefra"], "lat": 33.27, "lon": -0.31},
+    "46 - Aïn Témouchent": {"communes": ["Aïn Témouchent", "Beni Saf"], "lat": 35.30, "lon": -1.14},
+    "47 - Ghardaïa": {"communes": ["Ghardaïa", "Metlili", "Berriane"], "lat": 32.49, "lon": 3.67},
+    "48 - Relizane": {"communes": ["Relizane", "Zemoura"], "lat": 35.74, "lon": 0.56},
+    "49 - Timimoun": {"communes": ["Timimoun", "Aougrout"], "lat": 29.26, "lon": 0.24},
+    "50 - Bordj Badji Mokhtar": {"communes": ["Bordj Badji Mokhtar"], "lat": 21.33, "lon": 0.95},
+    "51 - Ouled Djellal": {"communes": ["Ouled Djellal", "Sidi Khaled"], "lat": 34.42, "lon": 5.07},
+    "52 - Béni Abbès": {"communes": ["Béni Abbès", "Kerzaz"], "lat": 30.13, "lon": -2.17},
+    "53 - In Salah": {"communes": ["In Salah", "Foggaret Ezzaouia"], "lat": 27.20, "lon": 2.47},
+    "54 - In Guezzam": {"communes": ["In Guezzam", "Tin Zaouatine"], "lat": 19.57, "lon": 5.77},
+    "55 - Touggourt": {"communes": ["Touggourt", "Témacine"], "lat": 33.10, "lon": 6.07},
+    "56 - Djanet": {"communes": ["Djanet", "Bordj El Haouas"], "lat": 24.55, "lon": 9.48},
+    "57 - El M'ghair": {"communes": ["El M'ghair", "Djamaa"], "lat": 33.95, "lon": 5.93},
+    "58 - El Meniaa": {"communes": ["El Meniaa", "Hassi Fehal"], "lat": 30.58, "lon": 2.88},
 }
+WILAYA_NAMES = list(WILAYAS.keys())
 
-# ─── Traductions ──────────────────────────────────────────────────────────────
-LANGUAGES = {
+def get_communes(wilaya):
+    return WILAYAS.get(wilaya, {}).get("communes", [wilaya])
+
+def get_wilaya_coords(wilaya):
+    d = WILAYAS.get(wilaya, {})
+    return d.get("lat", 28.0), d.get("lon", 1.65)
+
+# ── Traductions ───────────────────────────────────────────────────────────────
+LANG = {
     "fr": {
         "app_name": "AgriConnect", "login": "Connexion", "register": "Inscription",
         "logout": "Déconnexion", "home": "Accueil", "market": "Marché",
         "job": "Emploi", "transport": "Transport", "grazing": "Pâturage",
         "pollination": "Pollinisation", "fertilizer": "Engrais",
-        "equipment": "Matériel Agricole", "anem": "ANEM", "messages": "Messagerie",
-        "reviews": "Évaluations", "contract": "Contrat", "verification": "Vérification",
-        "profile": "Mon Profil", "no_announces": "Aucune annonce pour le moment.",
+        "equipment": "Matériel", "anem": "ANEM", "messages": "Messages",
+        "reviews": "Avis", "contract": "Contrat", "profile": "Profil",
+        "weather": "Météo", "prices": "Prix & Tendances", "alerts": "Urgences",
+        "assistant": "Assistant IA", "tracability": "Traçabilité",
+        "cooperative": "Coopératives", "dashboard": "Tableau de bord",
         "publish": "Publier", "list": "Annonces", "map": "Carte",
         "contact": "Contacter", "evaluate": "Évaluer", "contract_btn": "Contrat",
-        "send": "Envoyer", "download": "Télécharger", "my_offers": "Dernières annonces",
-        "suggestions": "Suggestions", "search": "Rechercher",
-        "wilaya": "Wilaya", "commune": "Commune",
-        "fill_required": "Veuillez remplir tous les champs obligatoires.",
-        "login_required": "Veuillez vous connecter.",
+        "send": "Envoyer", "download": "Télécharger",
+        "search": "Rechercher", "wilaya": "Wilaya", "commune": "Commune",
+        "no_ann": "Aucune annonce pour le moment.",
+        "login_req": "Veuillez vous connecter d'abord.",
+        "fill_req": "Remplissez tous les champs obligatoires.",
         "published": "Annonce publiée avec succès !",
-        "account_created": "Compte créé. Connectez-vous.",
-        "phone_used": "Ce numéro est déjà utilisé.",
-        "bad_credentials": "Identifiants incorrects.",
-        "validated": "Profil validé.",
-        "pending_none": "Aucun profil en attente.",
-        "no_convo": "Aucune conversation.",
-        "msg_sent": "Message envoyé.",
-        "rating_sent": "Évaluation soumise, merci !",
-        "contract_created": "Contrat enregistré.",
-        "doc_sent": "Document soumis pour vérification.",
-        "contract_title": "Contrat AgriConnect",
-        "page": "Page",
-        "next": "Suivant →",
-        "prev": "← Précédent",
+        "account_ok": "Compte créé. Connectez-vous.",
+        "phone_used": "Numéro déjà utilisé.",
+        "bad_creds": "Identifiants incorrects.",
+        "next": "Suivant →", "prev": "← Précédent", "page": "Page",
     },
     "ar": {
         "app_name": "أجريكونكت", "login": "تسجيل الدخول", "register": "التسجيل",
-        "logout": "تسجيل الخروج", "home": "الرئيسية", "market": "السوق",
+        "logout": "خروج", "home": "الرئيسية", "market": "السوق",
         "job": "وظائف", "transport": "النقل", "grazing": "الرعي",
         "pollination": "التلقيح", "fertilizer": "الأسمدة",
-        "equipment": "المعدات الفلاحية", "anem": "الوكالة الوطنية للتشغيل",
-        "messages": "الرسائل", "reviews": "التقييمات", "contract": "عقد",
-        "verification": "التحقق", "profile": "الملف الشخصي",
-        "no_announces": "لا توجد إعلانات", "publish": "نشر",
-        "list": "قائمة", "map": "خريطة", "contact": "اتصال",
-        "evaluate": "تقييم", "contract_btn": "عقد", "send": "إرسال",
-        "download": "تحميل", "my_offers": "آخر الإعلانات",
-        "suggestions": "اقتراحات", "search": "بحث",
-        "wilaya": "ولاية", "commune": "بلدية",
-        "fill_required": "الرجاء ملء جميع الحقول المطلوبة.",
-        "login_required": "الرجاء تسجيل الدخول.",
+        "equipment": "المعدات", "anem": "الوكالة", "messages": "الرسائل",
+        "reviews": "التقييمات", "contract": "عقد", "profile": "الملف",
+        "weather": "الطقس", "prices": "الأسعار", "alerts": "تنبيهات",
+        "assistant": "مساعد ذكي", "tracability": "التتبع",
+        "cooperative": "التعاونيات", "dashboard": "لوحة التحكم",
+        "publish": "نشر", "list": "قائمة", "map": "خريطة",
+        "contact": "اتصال", "evaluate": "تقييم", "contract_btn": "عقد",
+        "send": "إرسال", "download": "تحميل",
+        "search": "بحث", "wilaya": "ولاية", "commune": "بلدية",
+        "no_ann": "لا توجد إعلانات",
+        "login_req": "الرجاء تسجيل الدخول أولاً.",
+        "fill_req": "يرجى ملء جميع الحقول المطلوبة.",
         "published": "تم نشر الإعلان بنجاح!",
-        "account_created": "تم إنشاء الحساب. سجل دخولك.",
-        "phone_used": "رقم الهاتف مستخدم بالفعل.",
-        "bad_credentials": "بيانات الدخول غير صحيحة.",
-        "validated": "تم التحقق من الملف.", "pending_none": "لا توجد ملفات معلقة.",
-        "no_convo": "لا توجد محادثات.", "msg_sent": "تم إرسال الرسالة.",
-        "rating_sent": "شكرًا! تم تقديم التقييم.",
-        "contract_created": "تم إنشاء العقد.", "doc_sent": "تم إرسال المستند.",
-        "contract_title": "عقد أجريكونكت", "page": "صفحة",
-        "next": "التالي →", "prev": "← السابق",
+        "account_ok": "تم إنشاء الحساب. سجل دخولك.",
+        "phone_used": "رقم الهاتف مستخدم.",
+        "bad_creds": "بيانات غير صحيحة.",
+        "next": "التالي →", "prev": "← السابق", "page": "صفحة",
     },
     "en": {
         "app_name": "AgriConnect", "login": "Login", "register": "Register",
-        "logout": "Logout", "home": "Home", "market": "Marketplace",
+        "logout": "Logout", "home": "Home", "market": "Market",
         "job": "Jobs", "transport": "Transport", "grazing": "Grazing",
         "pollination": "Pollination", "fertilizer": "Fertilizer",
         "equipment": "Equipment", "anem": "ANEM", "messages": "Messages",
-        "reviews": "Reviews", "contract": "Contract", "verification": "Verification",
-        "profile": "My Profile", "no_announces": "No announcements yet.",
-        "publish": "Publish", "list": "List", "map": "Map",
+        "reviews": "Reviews", "contract": "Contract", "profile": "Profile",
+        "weather": "Weather", "prices": "Prices & Trends", "alerts": "Alerts",
+        "assistant": "AI Assistant", "tracability": "Traceability",
+        "cooperative": "Cooperatives", "dashboard": "Dashboard",
+        "publish": "Publish", "list": "Listings", "map": "Map",
         "contact": "Contact", "evaluate": "Rate", "contract_btn": "Contract",
-        "send": "Send", "download": "Download", "my_offers": "Latest Listings",
-        "suggestions": "Suggestions", "search": "Search",
-        "wilaya": "Wilaya", "commune": "Commune",
-        "fill_required": "Please fill all required fields.",
-        "login_required": "Please log in first.",
+        "send": "Send", "download": "Download",
+        "search": "Search", "wilaya": "Wilaya", "commune": "Commune",
+        "no_ann": "No announcements yet.",
+        "login_req": "Please log in first.",
+        "fill_req": "Please fill all required fields.",
         "published": "Announcement published successfully!",
-        "account_created": "Account created. Please log in.",
+        "account_ok": "Account created. Please log in.",
         "phone_used": "Phone number already in use.",
-        "bad_credentials": "Incorrect credentials.",
-        "validated": "Profile validated.", "pending_none": "No pending profiles.",
-        "no_convo": "No conversations yet.", "msg_sent": "Message sent.",
-        "rating_sent": "Rating submitted, thank you!",
-        "contract_created": "Contract created.", "doc_sent": "Document submitted.",
-        "contract_title": "AgriConnect Contract", "page": "Page",
-        "next": "Next →", "prev": "← Previous",
+        "bad_creds": "Incorrect credentials.",
+        "next": "Next →", "prev": "← Previous", "page": "Page",
     },
 }
 
 def _(key):
     lang = st.session_state.get("lang", "fr")
-    return LANGUAGES.get(lang, LANGUAGES["fr"]).get(key, key)
+    return LANG.get(lang, LANG["fr"]).get(key, key)
 
-# ─── Session State ─────────────────────────────────────────────────────────────
+# ── Session State ─────────────────────────────────────────────────────────────
 DEFAULTS = {
     "user": None, "page": "home", "lang": "fr",
     "msg_to": None, "msg_announce": None,
     "review_announce": None, "contract_announce": None,
-    "search_query": "", "db_initialized": False,
-    "ai_messages": [], "current_parcelle": None,
-    "coop_selected": None, "forum_post_reply": None,
+    "db_init": False, "search_q": "",
+    "urgent_shown": False,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ─── CSS (inchangé) ───────────────────────────────────────────────────────────
+# ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=Noto+Sans+Arabic:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap');
 
 :root {
-    --green-dark: #1b5e20;
-    --green: #2e7d32;
-    --green-light: #43a047;
-    --green-pale: #e8f5e9;
-    --amber: #f59e0b;
-    --amber-pale: #fffbeb;
-    --text: #1a1a1a;
-    --text-muted: #6b7280;
-    --border: #e5e7eb;
-    --card-bg: #ffffff;
-    --radius: 14px;
-    --shadow: 0 2px 12px rgba(0,0,0,0.07);
-    --shadow-hover: 0 8px 28px rgba(0,0,0,0.13);
+    --green:       #2e7d32;
+    --green-d:     #1b5e20;
+    --green-l:     #43a047;
+    --green-pale:  #e8f5e9;
+    --amber:       #f59e0b;
+    --amber-pale:  #fffbeb;
+    --red:         #dc2626;
+    --red-pale:    #fef2f2;
+    --blue:        #1d4ed8;
+    --blue-pale:   #eff6ff;
+    --text:        #111827;
+    --muted:       #6b7280;
+    --border:      #e5e7eb;
+    --bg:          #f9fafb;
+    --card:        #ffffff;
+    --radius:      14px;
+    --shadow:      0 1px 8px rgba(0,0,0,.06);
+    --shadow-h:    0 8px 24px rgba(0,0,0,.11);
 }
+* { font-family: 'Sora', sans-serif; box-sizing: border-box; }
 
-* { font-family: 'Sora', 'Noto Sans Arabic', sans-serif; box-sizing: border-box; }
-
-.main-header {
-    background: linear-gradient(135deg, var(--green-dark) 0%, var(--green-light) 100%);
-    color: white;
-    padding: 2rem 1.5rem;
-    border-radius: var(--radius);
-    text-align: center;
-    margin-bottom: 1.5rem;
+/* ── Header ── */
+.hero {
+    background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 50%, #388e3c 100%);
+    color: white; padding: 2rem 2rem 1.5rem; border-radius: var(--radius);
+    margin-bottom: 1.5rem; position: relative; overflow: hidden;
 }
-.main-header h1 { font-size: 2.2rem; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
-.main-header p { margin: 0.4rem 0 0; opacity: 0.85; font-size: 1rem; font-weight: 300; }
+.hero::before {
+    content: ''; position: absolute; top: -40px; right: -40px;
+    width: 200px; height: 200px; background: rgba(255,255,255,.05);
+    border-radius: 50%;
+}
+.hero h1 { font-size: 2rem; font-weight: 700; margin: 0; letter-spacing: -.5px; }
+.hero p  { margin: .4rem 0 0; opacity: .8; font-size: .95rem; font-weight: 300; }
 
+/* ── Cards ── */
 .card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    box-shadow: var(--shadow);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    margin-bottom: 1.2rem;
-    height: 100%;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    box-shadow: var(--shadow); transition: transform .2s, box-shadow .2s;
+    margin-bottom: 1rem; height: 100%;
 }
-.card:hover { transform: translateY(-4px); box-shadow: var(--shadow-hover); }
-.card-img {
-    height: 170px; width: 100%; object-fit: cover;
-    background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 3rem;
-}
+.card:hover { transform: translateY(-3px); box-shadow: var(--shadow-h); }
+.card-img { height: 160px; width: 100%; object-fit: cover; background: var(--green-pale); display: flex; align-items: center; justify-content: center; font-size: 2.5rem; }
 .card-body { padding: 14px; }
-.card-title { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 4px; }
-.card-desc { color: var(--text-muted); font-size: 0.82rem; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card-price { font-size: 1.15rem; font-weight: 700; color: var(--green); }
-.card-loc { color: var(--text-muted); font-size: 0.78rem; margin-top: 4px; }
+.card-title { font-size: .95rem; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.card-desc { color: var(--muted); font-size: .8rem; margin-bottom: 8px; }
+.card-price { font-size: 1.1rem; font-weight: 700; color: var(--green); }
+.card-loc   { color: var(--muted); font-size: .75rem; margin-top: 4px; }
 
-.badge {
-    display: inline-block; padding: 2px 10px; border-radius: 20px;
-    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.3px;
-}
-.badge-green { background: var(--green-pale); color: var(--green); }
-.badge-amber { background: var(--amber-pale); color: #92400e; }
+/* ── Badges ── */
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: .7rem; font-weight: 600; }
+.b-green  { background: var(--green-pale);  color: var(--green-d); }
+.b-amber  { background: var(--amber-pale);  color: #92400e; }
+.b-red    { background: var(--red-pale);    color: #991b1b; }
+.b-blue   { background: var(--blue-pale);   color: var(--blue); }
+.b-gray   { background: #f3f4f6; color: #374151; }
+.b-verified { background: #ecfdf5; color: #065f46; }
 
-.stat-card {
-    background: white; border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 1.2rem 1rem;
-    text-align: center; box-shadow: var(--shadow);
-}
-.stat-card .number { font-size: 2rem; font-weight: 700; color: var(--green); }
-.stat-card .label { color: var(--text-muted); font-size: 0.82rem; margin-top: 2px; }
+/* ── Stat cards ── */
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; text-align: center; }
+.stat .num  { font-size: 1.8rem; font-weight: 700; color: var(--green); }
+.stat .lbl  { color: var(--muted); font-size: .78rem; margin-top: 2px; }
 
-.no-announce {
-    text-align: center; padding: 3rem; color: var(--text-muted);
-    font-size: 1.1rem; background: var(--green-pale);
-    border-radius: var(--radius); border: 1px dashed #a5d6a7;
+/* ── Urgent banner ── */
+.urgent-banner {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    color: white; padding: 12px 16px; border-radius: 10px;
+    margin-bottom: 1rem; display: flex; align-items: center; gap: 10px;
+    font-weight: 500; font-size: .9rem; animation: pulse-red 2s infinite;
 }
+@keyframes pulse-red { 0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.4)} 50%{box-shadow:0 0 0 8px rgba(220,38,38,0)} }
 
-.msg-bubble-me {
-    background: var(--green-pale); color: var(--text);
-    padding: 10px 14px; border-radius: 18px 18px 4px 18px;
-    max-width: 75%; margin-left: auto; margin-bottom: 8px;
-    font-size: 0.9rem;
+/* ── Weather card ── */
+.weather-card {
+    background: linear-gradient(135deg, #1565c0, #0277bd);
+    color: white; border-radius: var(--radius); padding: 1.5rem;
+    text-align: center;
 }
-.msg-bubble-other {
-    background: #f3f4f6; color: var(--text);
-    padding: 10px 14px; border-radius: 18px 18px 18px 4px;
-    max-width: 75%; margin-right: auto; margin-bottom: 8px;
-    font-size: 0.9rem;
-}
-.msg-time { font-size: 0.68rem; color: var(--text-muted); margin-top: 3px; }
+.weather-temp { font-size: 3rem; font-weight: 700; }
+.weather-desc { font-size: .9rem; opacity: .85; }
 
-.footer {
-    text-align: center; padding: 1.5rem;
-    color: var(--text-muted); border-top: 1px solid var(--border);
-    margin-top: 3rem; font-size: 0.82rem;
-}
+/* ── AI chat ── */
+.ai-bubble { background: var(--green-pale); border-radius: 12px 12px 12px 0; padding: 12px 16px; margin: 8px 0; font-size: .88rem; line-height: 1.6; color: var(--text); border-left: 3px solid var(--green); }
+.user-bubble { background: var(--blue-pale); border-radius: 12px 12px 0 12px; padding: 12px 16px; margin: 8px 0; font-size: .88rem; line-height: 1.6; color: var(--text); text-align: right; }
 
-@media (max-width: 768px) {
-    .main-header h1 { font-size: 1.5rem; }
-}
+/* ── Rep score ── */
+.rep-ring { width: 70px; height: 70px; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--pct)*1%),var(--border) 0); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .9rem; color: var(--green); position: relative; }
+.rep-ring::before { content:''; position: absolute; width: 52px; height: 52px; border-radius: 50%; background: white; }
+.rep-val { position: relative; z-index: 1; }
+
+/* ── Price chart ── */
+.price-up   { color: #dc2626; font-weight: 600; }
+.price-down { color: #16a34a; font-weight: 600; }
+
+/* ── Timeline ── */
+.timeline-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.timeline-dot  { width: 10px; height: 10px; border-radius: 50%; background: var(--green); margin-top: 6px; flex-shrink: 0; }
+.timeline-date { font-size: .75rem; color: var(--muted); }
+.timeline-text { font-size: .85rem; color: var(--text); }
+
+/* ── Misc ── */
+.no-announce { text-align: center; padding: 3rem; color: var(--muted); background: var(--green-pale); border-radius: var(--radius); border: 1px dashed #a5d6a7; }
+.footer { text-align: center; padding: 1.5rem; color: var(--muted); border-top: 1px solid var(--border); margin-top: 3rem; font-size: .78rem; }
+.qr-box { background: white; padding: 12px; border-radius: 10px; border: 1px solid var(--border); text-align: center; }
+.score-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.score-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--green-l), var(--green-d)); }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── DB ────────────────────────────────────────────────────────────────────────
+# ── DB ─────────────────────────────────────────────────────────────────────────
 def init_db():
-    """Initialise la base de données SANS écraser les données existantes."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Tables existantes
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         phone TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
-        profile_type TEXT,
+        profile_type TEXT DEFAULT 'Agriculteur',
         is_verified INTEGER DEFAULT 0,
-        wilaya TEXT,
-        commune TEXT,
-        location_lat REAL DEFAULT 0,
-        location_lon REAL DEFAULT 0,
+        wilaya TEXT, commune TEXT,
+        lat REAL DEFAULT 0, lon REAL DEFAULT 0,
         documents TEXT,
+        reputation_score REAL DEFAULT 0,
+        total_transactions INTEGER DEFAULT 0,
+        bio TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS announcements (
+    );
+    CREATE TABLE IF NOT EXISTS announcements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         type TEXT NOT NULL,
         title TEXT NOT NULL,
-        description TEXT,
+        description TEXT DEFAULT '',
         price REAL DEFAULT 0,
-        unit TEXT,
-        wilaya TEXT,
-        commune TEXT,
-        lat REAL DEFAULT 0,
-        lon REAL DEFAULT 0,
+        unit TEXT DEFAULT '',
+        wilaya TEXT DEFAULT '',
+        commune TEXT DEFAULT '',
+        lat REAL DEFAULT 0, lon REAL DEFAULT 0,
         data TEXT DEFAULT '{}',
         images TEXT DEFAULT '',
+        is_urgent INTEGER DEFAULT 0,
+        urgent_discount INTEGER DEFAULT 0,
+        is_traceable INTEGER DEFAULT 0,
+        qr_data TEXT DEFAULT '',
+        views INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+    );
+    CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sender_id INTEGER NOT NULL,
         receiver_id INTEGER NOT NULL,
         announcement_id INTEGER,
         content TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (sender_id) REFERENCES users(id),
-        FOREIGN KEY (receiver_id) REFERENCES users(id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS reviews (
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS reviews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         announcement_id INTEGER NOT NULL,
         reviewer_id INTEGER NOT NULL,
         rating INTEGER CHECK(rating BETWEEN 1 AND 5),
-        comment TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS contracts (
+        comment TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(announcement_id, reviewer_id)
+    );
+    CREATE TABLE IF NOT EXISTS contracts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         announcement_id INTEGER NOT NULL,
         renter_id INTEGER NOT NULL,
         owner_id INTEGER NOT NULL,
-        start_date TEXT,
-        end_date TEXT,
-        terms TEXT,
-        status TEXT DEFAULT 'pending',
+        start_date TEXT, end_date TEXT,
+        terms TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    # Nouvelles tables
-    c.execute('''CREATE TABLE IF NOT EXISTS parcels (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        name TEXT,
-        polygon_coords TEXT,
-        area_ha REAL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS crop_journal (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        parcel_id INTEGER NOT NULL,
-        culture TEXT,
-        sowing_date TEXT,
-        harvest_date TEXT,
-        yield_qx_ha REAL,
-        inputs TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (parcel_id) REFERENCES parcels(id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS cooperatives (
+    );
+    CREATE TABLE IF NOT EXISTS cooperatives (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        filiere TEXT,
-        wilaya TEXT,
-        created_by INTEGER,
+        wilaya TEXT, filiere TEXT,
+        creator_id INTEGER,
+        description TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS coop_members (
-        cooperative_id INTEGER,
-        user_id INTEGER,
+    );
+    CREATE TABLE IF NOT EXISTS coop_members (
+        coop_id INTEGER, user_id INTEGER,
         role TEXT DEFAULT 'member',
         joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (cooperative_id, user_id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS coop_orders (
+        PRIMARY KEY (coop_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS price_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cooperative_id INTEGER,
-        product TEXT,
-        quantity REAL,
-        unit TEXT,
-        status TEXT DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS credit_groups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        created_by INTEGER,
-        monthly_fee INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS credit_group_members (
-        group_id INTEGER,
-        user_id INTEGER,
-        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (group_id, user_id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS forum_posts (
+        product TEXT NOT NULL,
+        wilaya TEXT NOT NULL,
+        price REAL NOT NULL,
+        recorded_at DATE DEFAULT (date('now'))
+    );
+    CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
-        title TEXT,
-        content TEXT,
-        tags TEXT,
-        upvotes INTEGER DEFAULT 0,
+        wilaya TEXT,
+        type TEXT,
+        message TEXT,
+        is_read INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS forum_replies (
+    );
+    CREATE TABLE IF NOT EXISTS ai_conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        post_id INTEGER,
         user_id INTEGER,
+        role TEXT,
         content TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS insurance_subscriptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        culture TEXT,
-        area_ha REAL,
-        wilaya TEXT,
-        premium_monthly REAL,
-        active INTEGER DEFAULT 1,
-        subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS price_alerts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        product TEXT,
-        wilaya TEXT,
-        threshold_price REAL,
-        condition TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS reputation (
-        user_id INTEGER PRIMARY KEY,
-        score REAL DEFAULT 2.5,
-        nif_verified INTEGER DEFAULT 0,
-        badges TEXT DEFAULT '[]',
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
+    );
+    """)
 
-    # Données de test (seulement si table users vide)
+    # Seed data only if empty
     if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-        test_users = [
-            ("Agent ANEM", "0555000001", hash_password("anem123"), "ANEM", 1, "16 - Alger", "Alger Centre"),
-            ("Ali Ferme", "0555123456", hash_password("123456"), "Agriculteur", 1, "39 - El Oued", "Guemar"),
-            ("Fatima Transport", "0555654321", hash_password("123456"), "Transporteur", 1, "31 - Oran", "Es Sénia"),
+        seed_users = [
+            ("Agent ANEM Alger", "0555000001", hash_pw("anem123"), "ANEM", 1, "16 - Alger", "Alger Centre", 4.8, 42),
+            ("Ali Ferme El Oued",  "0555123456", hash_pw("123456"), "Agriculteur", 1, "39 - El Oued", "Guemar", 4.5, 18),
+            ("Fatima Transport",   "0555654321", hash_pw("123456"), "Transporteur", 1, "31 - Oran", "Es Sénia", 4.2, 31),
+            ("Karim Apiculteur",   "0556111222", hash_pw("123456"), "Apiculteur", 1, "06 - Béjaïa", "Akbou", 4.7, 12),
+            ("Samira Éleveuse",    "0556333444", hash_pw("123456"), "Éleveur", 0, "14 - Tiaret", "Sougueur", 3.9, 7),
         ]
-        c.executemany(
-            "INSERT INTO users (name,phone,password,profile_type,is_verified,wilaya,commune) VALUES (?,?,?,?,?,?,?)",
-            test_users
-        )
-        user_id = c.execute("SELECT id FROM users WHERE phone='0555123456'").fetchone()[0]
-        user_t   = c.execute("SELECT id FROM users WHERE phone='0555654321'").fetchone()[0]
-        test_ann = [
-            (user_id, "market",      "Pommes de terre fraîches",       "Variété Spunta, 10 tonnes disponibles",   45,   "DA/kg",        "39 - El Oued", "Guemar",   '{"product_type":"Légumes","quantity":10000}'),
-            (user_id, "grazing",     "Chaumes de blé à louer",         "50 ha, eau disponible, mai–juillet",     200,  "DA/tête/jour", "14 - Tiaret",  "Sougueur", '{"area_ha":50,"cover_type":"Chaume","water":"Oui","max_animals":100}'),
-            (user_id, "fertilizer",  "Fumier ovin composté",           "5 tonnes de qualité supérieure",        3000, "DA/tonne",     "17 - Djelfa",  "Messaâd",  '{"fertilizer_type":"Fumier ovin","quantity_tons":5}'),
-            (user_t,  "transport",   "Camion frigorifique Alger–Médéa","Capacité 10 t, départ chaque semaine",  8000, "DA/voyage",    "16 - Alger",   "El Harrach",'{"vehicle_type":"Frigorifique","capacity":10}'),
-            (user_id, "pollination", "20 ruches disponibles",          "Race locale, zone Béjaïa–Batna",        5000, "DA/ruche/sem", "06 - Béjaïa",  "Akbou",    '{"hive_count":20,"bee_race":"Locale","zone":"Béjaïa-Batna"}'),
-            (user_t,  "equipment",   "Tracteur Massey Ferguson 2020",  "Bon état, location journalière",        5000, "DA/jour",      "31 - Oran",    "Es Sénia", '{"offer_type":"Location","equipment_type":"Tracteur","brand":"Massey Ferguson","model":"MF 2020","year":2020,"state":"Bon"}'),
+        c.executemany("INSERT INTO users (name,phone,password,profile_type,is_verified,wilaya,commune,reputation_score,total_transactions) VALUES (?,?,?,?,?,?,?,?,?)", seed_users)
+
+        uid_ali   = c.execute("SELECT id FROM users WHERE phone='0555123456'").fetchone()[0]
+        uid_fat   = c.execute("SELECT id FROM users WHERE phone='0555654321'").fetchone()[0]
+        uid_kar   = c.execute("SELECT id FROM users WHERE phone='0556111222'").fetchone()[0]
+        uid_sam   = c.execute("SELECT id FROM users WHERE phone='0556333444'").fetchone()[0]
+
+        seed_ann = [
+            (uid_ali, "market",      "Pommes de terre Spunta",          "10 t disponibles, calibre A. Livraison possible.",    45,   "DA/kg",  "39 - El Oued",  "Guemar",   0, '{"product_type":"Légumes","quantity":10000}'),
+            (uid_sam, "grazing",     "Chaumes de blé — 50 ha",          "Eau disponible, mai–juillet, max 100 têtes.",        200,  "DA/tête/j","14 - Tiaret","Sougueur",  0, '{"area_ha":50,"cover_type":"Chaume","water":"Oui","max_animals":100}'),
+            (uid_ali, "fertilizer",  "Fumier ovin composté",            "5 t de qualité supérieure, ensaché.",               3000, "DA/t",   "17 - Djelfa",   "Messaâd",  0, '{"fertilizer_type":"Fumier ovin","quantity_tons":5}'),
+            (uid_fat, "transport",   "Camion frigo Alger–Constantine",  "10 t, départ chaque lundi.",                        8000, "DA/voy", "16 - Alger",    "El Harrach",0,'{"vehicle_type":"Frigorifique","capacity":10}'),
+            (uid_kar, "pollination", "20 ruches — zone Béjaïa–Batna",   "Race locale, déplacement inclus.",                  5000, "DA/ruch/sem","06 - Béjaïa","Akbou",  0, '{"hive_count":20,"bee_race":"Locale"}'),
+            (uid_fat, "equipment",   "Tracteur MF 2020 — location",     "Bon état, pneus neufs.",                            5000, "DA/j",   "31 - Oran",     "Es Sénia", 0, '{"offer_type":"Location","equipment_type":"Tracteur","brand":"Massey Ferguson","year":2020,"state":"Bon"}'),
+            (uid_ali, "market",      "Dattes Deglet Nour",               "Récolte 2025, 500 kg disponibles. URGENT — vente rapide!", 180, "DA/kg","39 - El Oued","Robbah", 1, '{"product_type":"Fruits","quantity":500}'),
+            (uid_sam, "job",         "Ouvriers saisonniers moisson",     "10 postes, juin–juillet, logement fourni.",         2500, "DA/j",   "14 - Tiaret",   "Frenda",   0, '{"contract_type":"Saisonnier","duration":45}'),
         ]
-        c.executemany(
-            "INSERT INTO announcements (user_id,type,title,description,price,unit,wilaya,commune,data) VALUES (?,?,?,?,?,?,?,?,?)",
-            test_ann
-        )
+        c.executemany("INSERT INTO announcements (user_id,type,title,description,price,unit,wilaya,commune,is_urgent,data) VALUES (?,?,?,?,?,?,?,?,?,?)", seed_ann)
+
+        # Seed price history (30 days, 5 products)
+        products = ["Pomme de terre", "Tomate", "Blé dur", "Oignon", "Dattes Deglet"]
+        wilayas_ph = ["31 - Oran", "16 - Alger", "19 - Sétif", "39 - El Oued", "25 - Constantine"]
+        base_prices = [45, 80, 38, 55, 180]
+        today = date.today()
+        for p_idx, prod in enumerate(products):
+            for w in wilayas_ph:
+                price = base_prices[p_idx]
+                for days_ago in range(30, -1, -1):
+                    d = today - timedelta(days=days_ago)
+                    price = max(price * (0.97 + random.random() * 0.06), 10)
+                    c.execute("INSERT OR IGNORE INTO price_history (product,wilaya,price,recorded_at) VALUES (?,?,?,?)",
+                              (prod, w, round(price, 1), d.isoformat()))
+
+        # Seed cooperatives
+        c.execute("INSERT INTO cooperatives (name,wilaya,filiere,creator_id,description) VALUES (?,?,?,?,?)",
+                  ("Coopérative des Maraîchers d'El Oued", "39 - El Oued", "Légumes", uid_ali, "Groupement pour ventes collectives aux GMS"))
+        coop_id = c.lastrowid
+        c.execute("INSERT OR IGNORE INTO coop_members (coop_id,user_id,role) VALUES (?,?,'admin')", (coop_id, uid_ali))
+        c.execute("INSERT OR IGNORE INTO coop_members (coop_id,user_id,role) VALUES (?,?,'member')", (coop_id, uid_sam))
 
     conn.commit()
     conn.close()
 
-def get_conn():
+def qdb(sql, params=(), fetch=True):
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
-    return conn
-
-def query_db(query, params=(), fetch=True):
-    conn = get_conn()
     try:
         cur = conn.cursor()
-        cur.execute(query, params)
+        cur.execute(sql, params)
         if fetch:
             rows = cur.fetchall()
             conn.close()
             return rows
-        else:
-            conn.commit()
-            last_id = cur.lastrowid
-            conn.close()
-            return last_id
+        conn.commit()
+        lid = cur.lastrowid
+        conn.close()
+        return lid
     except sqlite3.Error as e:
         conn.close()
-        st.error(f"Erreur DB : {e}")
+        st.error(f"DB : {e}")
         return [] if fetch else None
 
-def hash_password(pwd: str) -> str:
-    return hashlib.sha256(pwd.encode()).hexdigest()
+def hash_pw(p): return hashlib.sha256(p.encode()).hexdigest()
+def valid_phone(p): return bool(re.match(r'^0[5-7]\d{8}$', p.strip()))
 
-def validate_phone(phone: str) -> bool:
-    return bool(re.match(r'^0[5-7]\d{8}$', phone.strip()))
-
-# ─── Médias ───────────────────────────────────────────────────────────────────
-def image_to_base64(img_file, max_size=(800, 600), quality=65) -> str | None:
-    if img_file is None:
-        return None
+# ── Media ──────────────────────────────────────────────────────────────────────
+def img_to_b64(f, size=(800, 600), q=65):
+    if not f: return None
     try:
-        img_file.seek(0)
-        im = Image.open(img_file).convert("RGB")
-        im.thumbnail(max_size, Image.LANCZOS)
+        f.seek(0)
+        im = Image.open(f).convert("RGB")
+        im.thumbnail(size, Image.LANCZOS)
         buf = io.BytesIO()
-        im.save(buf, format="JPEG", quality=quality, optimize=True)
+        im.save(buf, "JPEG", quality=q, optimize=True)
         return base64.b64encode(buf.getvalue()).decode()
-    except Exception as e:
-        st.warning(f"Image ignorée : {e}")
-        return None
+    except Exception: return None
 
-def generate_contract_pdf(ann, renter_name, owner_name, terms: dict) -> bytes | None:
-    lines = [
-        "=" * 50,
-        f"  {_('contract_title')}",
-        "=" * 50,
-        "",
-        f"Annonce    : {ann['title']}",
-        f"Propriétaire : {owner_name}",
-        f"Locataire  : {renter_name}",
-        f"Début      : {terms.get('start', '')}",
-        f"Fin        : {terms.get('end', '')}",
-        "",
-        "Conditions :",
-        terms.get("details", ""),
-        "",
-        "=" * 50,
-        f"Date de génération : {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        "AgriConnect © 2026 — contact@agriconnect.dz",
-    ]
-    content = "\n".join(lines)
+def make_qr(data):
+    if not HAS_QR: return None
     try:
-        from fpdf import FPDF
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=11)
-        for line in lines:
-            pdf.multi_cell(0, 9, txt=line.encode("latin-1", "replace").decode("latin-1"))
-        return pdf.output(dest="S").encode("latin-1")
+        qr = qrcode.QRCode(version=1, box_size=6, border=2)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception: return None
+
+# ── Weather (Open-Meteo — gratuit, sans clé) ──────────────────────────────────
+@st.cache_data(ttl=3600)
+def get_weather(lat, lon, wilaya_name=""):
+    if not HAS_REQUESTS:
+        return _mock_weather(wilaya_name)
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weathercode"
+            f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode"
+            f"&timezone=Africa/Algiers&forecast_days=7"
+        )
+        r = requests.get(url, timeout=6)
+        if r.status_code == 200:
+            return r.json()
     except Exception:
         pass
-    return content.encode("utf-8")
+    return _mock_weather(wilaya_name)
 
-# ─── Card ─────────────────────────────────────────────────────────────────────
-MODULE_ICONS = {
-    "market": "🥕", "job": "👷", "transport": "🚛",
-    "grazing": "🐑", "pollination": "🐝", "fertilizer": "🌱",
-    "equipment": "🚜",
+def _mock_weather(name=""):
+    today = date.today()
+    wc = [0, 1, 2, 61, 80, 95, 71, 3]
+    random.seed(abs(hash(name)) % 999)
+    return {
+        "current": {
+            "temperature_2m": round(15 + random.random() * 20, 1),
+            "relative_humidity_2m": random.randint(30, 75),
+            "wind_speed_10m": round(random.random() * 30, 1),
+            "weathercode": random.choice(wc),
+        },
+        "daily": {
+            "time": [(today + timedelta(days=i)).isoformat() for i in range(7)],
+            "temperature_2m_max": [round(20 + random.random() * 15, 1) for _ in range(7)],
+            "temperature_2m_min": [round(8 + random.random() * 10, 1) for _ in range(7)],
+            "precipitation_sum": [round(random.random() * 5, 1) for _ in range(7)],
+            "weathercode": [random.choice(wc) for _ in range(7)],
+        }
+    }
+
+WMO_ICONS = {
+    0: ("☀️", "Ensoleillé"), 1: ("🌤️", "Peu nuageux"), 2: ("⛅", "Nuageux"),
+    3: ("☁️", "Couvert"), 45: ("🌫️", "Brouillard"), 51: ("🌦️", "Bruine"),
+    61: ("🌧️", "Pluie"), 71: ("🌨️", "Neige"), 80: ("🌦️", "Averses"),
+    95: ("⛈️", "Orage"),
+}
+def wmo(code):
+    for k, v in WMO_ICONS.items():
+        if abs(code - k) < 5: return v
+    return ("🌡️", "Variable")
+
+# ── AI Assistant (règles agro algériennes) ─────────────────────────────────────
+AGRO_KB = {
+    "calendrier": {
+        "tomate": {"semis": "Fév–Mar (sous abri), transplant Avr–Mai", "récolte": "Juil–Oct"},
+        "pomme de terre": {"semis": "Fév–Mar ou Sep–Oct", "récolte": "Mai–Jun ou Jan–Feb"},
+        "blé dur": {"semis": "Nov–Dec", "récolte": "Jun–Jul"},
+        "oignon": {"semis": "Sep–Oct (automne)", "récolte": "Avr–Mai"},
+        "pastèque": {"semis": "Avr–Mai", "récolte": "Jul–Sep"},
+        "dattes": {"floraison": "Mar–Avr", "récolte": "Sep–Nov"},
+    },
+    "zones_climatiques": {
+        "nord littoral": ["06 - Béjaïa","23 - Annaba","21 - Skikda","18 - Jijel"],
+        "hauts plateaux": ["14 - Tiaret","19 - Sétif","28 - M'Sila","17 - Djelfa"],
+        "saharien": ["07 - Biskra","39 - El Oued","30 - Ouargla","47 - Ghardaïa"],
+        "tellien": ["16 - Alger","09 - Blida","42 - Tipaza","35 - Boumerdès"],
+    },
+    "maladies": {
+        "mildiou": "Traitement : Mancozèbe 2g/L ou Metalaxyl. Prévention : espacer les plants, éviter excès d'eau.",
+        "oïdium": "Soufre mouillable 3g/L ou Tebuconazole. Pulvériser tôt le matin.",
+        "fusariose": "Pas de traitement curatif. Rotation cultures 3–4 ans, chaux vive sur sol.",
+        "pucerons": "Imidaclopride ou savon insecticide bio. Introduire coccinelles.",
+        "doryphore": "Deltaméthrine ou Bacillus thuringiensis (bio). Ramassage manuel.",
+    }
 }
 
-def render_announce_card(a):
-    icon = MODULE_ICONS.get(a["type"], "📌")
+def ai_respond(question, user_wilaya=""):
+    question_lower = question.lower()
+
+    # Détection de zone climatique
+    zone = "hauts plateaux"
+    for z, wilayas in AGRO_KB["zones_climatiques"].items():
+        if any(w.lower() in user_wilaya.lower() for w in wilayas):
+            zone = z
+
+    # Calendrier cultural
+    for culture, cal in AGRO_KB["calendrier"].items():
+        if culture in question_lower:
+            resp = f"📅 **Calendrier pour {culture.title()}** (zone : {zone})\n\n"
+            for k, v in cal.items():
+                resp += f"• **{k.capitalize()}** : {v}\n"
+            if zone == "saharien":
+                resp += "\n⚠️ En zone saharienne : privilégiez les variétés résistantes à la chaleur et l'irrigation goutte-à-goutte."
+            elif zone == "hauts plateaux":
+                resp += "\n❄️ Sur les hauts plateaux : attention aux gelées tardives en mars–avril."
+            return resp
+
+    # Maladies
+    for maladie, traitement in AGRO_KB["maladies"].items():
+        if maladie in question_lower:
+            return f"🦠 **{maladie.title()}** :\n\n{traitement}\n\n💡 Consultez votre DSA locale pour des conseils adaptés à votre wilaya."
+
+    # Prix
+    if any(w in question_lower for w in ["prix", "tarif", "combien", "coût"]):
+        return (
+            "💰 **Prix moyens du marché (mai 2026)** :\n\n"
+            "• Pomme de terre : 40–55 DA/kg\n"
+            "• Tomate : 60–90 DA/kg\n"
+            "• Blé dur : 35–42 DA/kg\n"
+            "• Oignon : 50–70 DA/kg\n"
+            "• Dattes Deglet : 160–220 DA/kg\n\n"
+            "📊 Consultez l'onglet **Prix & Tendances** pour les courbes historiques."
+        )
+
+    # Engrais
+    if any(w in question_lower for w in ["engrais", "fertilisant", "azote", "npk"]):
+        return (
+            "🌱 **Recommandations fertilisation** :\n\n"
+            "• **NPK 15-15-15** : apport de base, 3–5 q/ha avant semis\n"
+            "• **Urée 46%** : couverture azotée, 1–2 q/ha au tallage (céréales)\n"
+            "• **Fumier ovin composté** : 20–30 t/ha, apport matière organique\n"
+            "• **Phosphate bicalcique** : sur sols pauvres en P, 2–3 q/ha\n\n"
+            "💡 Faites une analyse de sol (ITGC) avant tout programme de fertilisation."
+        )
+
+    # Irrigation
+    if any(w in question_lower for w in ["irrigation", "arrosage", "eau", "goutte"]):
+        return (
+            "💧 **Conseils irrigation** :\n\n"
+            "• **Goutte-à-goutte** : économie de 40–60% d'eau vs aspersion\n"
+            "• **Besoins indicatifs** : tomate 600–800 mm/cycle, blé 350–450 mm\n"
+            "• En zone saharienne : irriguer tôt le matin ou la nuit\n"
+            "• **Subventions** : le FNRDA finance jusqu'à 70% du matériel d'irrigation\n\n"
+            "📋 Renseignez-vous auprès de votre DSA pour les aides 2026."
+        )
+
+    # Subventions
+    if any(w in question_lower for w in ["subvention", "aide", "fnrda", "fdrmvtc"]):
+        return (
+            "🏦 **Aides et subventions agricoles 2026** :\n\n"
+            "• **FNRDA** : soutien à l'investissement (matériel, semences, irrigation)\n"
+            "• **FDRMVTC** : filières maraîchage, vigne, tabac\n"
+            "• **ANSEJ/CNAC** : financement jeunes agriculteurs\n"
+            "• **ANEM** : aide à l'emploi saisonnier (exonération charges)\n\n"
+            "📍 Déposez votre dossier à la Direction des Services Agricoles (DSA) de votre wilaya."
+        )
+
+    # Default contextuel
+    greetings = ["bonjour", "salam", "مرحبا", "مساء", "صباح"]
+    if any(g in question_lower for g in greetings):
+        return (
+            f"السلام عليكم / Bonjour ! 👋\n\n"
+            f"Je suis l'assistant agricole d'AgriConnect. Je peux vous aider sur :\n"
+            f"• 📅 Calendriers culturaux par wilaya\n"
+            f"• 🦠 Diagnostic et traitement des maladies\n"
+            f"• 💰 Prix du marché et tendances\n"
+            f"• 🌱 Fertilisation et irrigation\n"
+            f"• 🏦 Subventions et aides agricoles\n\n"
+            f"Que voulez-vous savoir ?"
+        )
+
+    return (
+        f"🌿 Je n'ai pas trouvé de réponse précise pour «{question}».\n\n"
+        f"Essayez des questions comme :\n"
+        f"• *«Quand planter les tomates à {user_wilaya or 'Sétif'} ?»*\n"
+        f"• *«Comment traiter le mildiou ?»*\n"
+        f"• *«Quels engrais pour le blé dur ?»*\n"
+        f"• *«Aides FNRDA 2026»*"
+    )
+
+# ── Reputation score ──────────────────────────────────────────────────────────
+def compute_reputation(user_id):
+    reviews  = qdb("SELECT AVG(r.rating) as avg FROM reviews r JOIN announcements a ON r.announcement_id=a.id WHERE a.user_id=?", (user_id,))
+    avg_rev  = (reviews[0]["avg"] or 0) if reviews else 0
+    nb_ann   = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (user_id,))[0]["n"]
+    nb_msg   = qdb("SELECT COUNT(*) as n FROM messages WHERE sender_id=?", (user_id,))[0]["n"]
+    user     = qdb("SELECT * FROM users WHERE id=?", (user_id,))[0]
+    verified = 1 if user["is_verified"] else 0
+    since    = (datetime.now() - datetime.strptime(user["created_at"][:10], "%Y-%m-%d")).days / 30
+    score = (
+        avg_rev        * 0.4 +
+        min(nb_ann/10, 5) * 0.2 +
+        min(nb_msg/20, 5) * 0.1 +
+        verified       * 1.0 +
+        min(since/6, 5) * 0.1
+    )
+    return min(round(score, 2), 5.0)
+
+# ── Render card ────────────────────────────────────────────────────────────────
+MOD_ICON = {"market":"🥕","job":"👷","transport":"🚛","grazing":"🐑",
+            "pollination":"🐝","fertilizer":"🌱","equipment":"🚜"}
+
+def render_card(a, key_prefix="c"):
+    urgent = a["is_urgent"]
+    if urgent:
+        st.markdown('<div class="urgent-banner">🚨 VENTE URGENTE — Prix réduit disponible !</div>', unsafe_allow_html=True)
+
+    icon = MOD_ICON.get(a["type"], "📌")
     if a["images"]:
-        first_b64 = a["images"].split(";")[0]
-        img_html = f'<img src="data:image/jpeg;base64,{first_b64}" style="height:170px;width:100%;object-fit:cover;">'
+        first = a["images"].split(";")[0]
+        img_html = f'<img src="data:image/jpeg;base64,{first}" style="height:160px;width:100%;object-fit:cover;">'
     else:
         img_html = f'<div class="card-img">{icon}</div>'
 
-    desc = (a["description"] or "")[:80]
-    if len(a["description"] or "") > 80:
-        desc += "…"
+    desc = (a["description"] or "")
+    desc_short = desc[:90] + "…" if len(desc) > 90 else desc
+    ur_badge = '<span class="badge b-red">🚨 URGENT</span> ' if urgent else ""
+    tr_badge = '<span class="badge b-blue">🔍 Traçable</span> ' if a["is_traceable"] else ""
+
+    author_row = qdb("SELECT name, reputation_score, is_verified FROM users WHERE id=?", (a["user_id"],))
+    author = author_row[0] if author_row else None
+    rep_html = ""
+    if author:
+        stars = "⭐" * round(author["reputation_score"])
+        ver = "✅" if author["is_verified"] else ""
+        rep_html = f'<div style="font-size:.75rem;color:#6b7280;margin-top:6px;">{ver} {author["name"]} {stars}</div>'
 
     st.markdown(f"""
     <div class="card">
         {img_html}
         <div class="card-body">
-            <span class="badge badge-green">{a['type'].upper()}</span>
+            {ur_badge}{tr_badge}
+            <span class="badge b-gray" style="margin-top:4px;">{a['type'].upper()}</span>
             <div class="card-title" style="margin-top:6px;">{a['title']}</div>
-            <div class="card-desc">{desc}</div>
+            <div class="card-desc">{desc_short}</div>
             <div class="card-price">{a['price']:,.0f} {a['unit'] or ''}</div>
             <div class="card-loc">📍 {a['wilaya']} — {a['commune']}</div>
+            {rep_html}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button(_("contact"), key=f"msg_{a['id']}", use_container_width=True):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("💬 " + _("contact"), key=f"{key_prefix}_msg_{a['id']}", use_container_width=True):
             st.session_state.msg_to = a["user_id"]
             st.session_state.msg_announce = a["id"]
-            st.session_state.page = "messages"
-            st.rerun()
-    with col2:
-        if st.button(_("evaluate"), key=f"rev_{a['id']}", use_container_width=True):
+            st.session_state.page = "messages"; st.rerun()
+    with c2:
+        if st.button("⭐ " + _("evaluate"), key=f"{key_prefix}_rev_{a['id']}", use_container_width=True):
             st.session_state.review_announce = a["id"]
-            st.session_state.page = "reviews"
-            st.rerun()
-    with col3:
-        if a["type"] in ("grazing", "pollination", "equipment"):
-            if st.button(_("contract_btn"), key=f"ct_{a['id']}", use_container_width=True):
+            st.session_state.page = "reviews"; st.rerun()
+    with c3:
+        if a["type"] in ("grazing","pollination","equipment"):
+            if st.button("📄 " + _("contract_btn"), key=f"{key_prefix}_ct_{a['id']}", use_container_width=True):
                 st.session_state.contract_announce = a["id"]
-                st.session_state.page = "contract"
-                st.rerun()
+                st.session_state.page = "contract"; st.rerun()
 
-# ─── Pages originales (avec clés uniques ajoutées) ───────────────────────────
+# ── Navbar ─────────────────────────────────────────────────────────────────────
+def navbar():
+    pages_all = [
+        ("home","🏠"),("market","🥕"),("job","👷"),("transport","🚛"),
+        ("grazing","🐑"),("pollination","🐝"),("equipment","🚜"),
+        ("weather","🌤️"),("prices","📊"),("alerts","🚨"),
+        ("assistant","🤖"),("cooperative","🤝"),("messages","💬"),("profile","👤"),
+    ]
+    user = st.session_state.user
+    if user and user.get("profile_type") == "ANEM":
+        pages_all.insert(4, ("anem","🏛️"))
+
+    cols = st.columns(len(pages_all))
+    for i, (pg, icon) in enumerate(pages_all):
+        label = icon + " " + _(pg)
+        is_active = st.session_state.page == pg
+        with cols[i]:
+            if st.button(label, key=f"nav_{pg}", use_container_width=True,
+                         type="primary" if is_active else "secondary"):
+                st.session_state.page = pg; st.rerun()
+
+# ── Auth pages ─────────────────────────────────────────────────────────────────
 def login_page():
-    col = st.columns([1, 2, 1])[1]
+    col = st.columns([1,2,1])[1]
     with col:
         st.markdown("### 🔐 " + _("login"))
-        phone = st.text_input("📱 Téléphone (ex: 0555123456)", key="login_phone")
-        pwd   = st.text_input("🔑 Mot de passe", type="password", key="login_pwd")
-        if st.button(_("login"), key="login_btn", use_container_width=True, type="primary"):
-            if not phone or not pwd:
-                st.warning(_("fill_required"))
+        phone = st.text_input("📱 Téléphone")
+        pwd   = st.text_input("🔑 Mot de passe", type="password")
+        if st.button(_("login"), use_container_width=True, type="primary"):
+            if not (phone and pwd):
+                st.warning(_("fill_req"))
             else:
-                rows = query_db(
-                    "SELECT * FROM users WHERE phone=? AND password=?",
-                    (phone.strip(), hash_password(pwd))
-                )
-                if rows:
-                    st.session_state.user = dict(rows[0])
-                    st.session_state.page = "home"
-                    st.rerun()
+                r = qdb("SELECT * FROM users WHERE phone=? AND password=?", (phone.strip(), hash_pw(pwd)))
+                if r:
+                    st.session_state.user = dict(r[0]); st.session_state.page = "home"; st.rerun()
                 else:
-                    st.error(_("bad_credentials"))
+                    st.error(_("bad_creds"))
         st.markdown("---")
-        if st.button(_("register"), key="goto_register_btn", use_container_width=True):
-            st.session_state.page = "register"
-            st.rerun()
+        if st.button(_("register"), use_container_width=True):
+            st.session_state.page = "register"; st.rerun()
 
 def register_page():
-    col = st.columns([1, 2, 1])[1]
+    col = st.columns([1,2,1])[1]
     with col:
         st.markdown("### 📝 " + _("register"))
-        name    = st.text_input("Nom complet *", key="reg_name")
-        phone   = st.text_input("Téléphone * (ex: 0555123456)", key="reg_phone")
-        pwd     = st.text_input("Mot de passe *", type="password", key="reg_pwd")
-        pwd2    = st.text_input("Confirmer le mot de passe *", type="password", key="reg_pwd2")
-        profile = st.selectbox("Profil *", ["Agriculteur","Éleveur","Apiculteur","Transporteur","Acheteur","ANEM","Travailleur"], key="reg_profile")
-        wilaya  = st.selectbox(_("wilaya") + " *", list(WILAYAS.keys()), key="reg_wilaya")
-        commune = st.selectbox(_("commune") + " *", WILAYAS[wilaya], key="reg_commune")
+        name    = st.text_input("Nom complet *")
+        phone   = st.text_input("Téléphone * (ex: 0555123456)")
+        pwd     = st.text_input("Mot de passe * (min 6 car.)", type="password")
+        pwd2    = st.text_input("Confirmer le mot de passe *", type="password")
+        profile = st.selectbox("Profil", ["Agriculteur","Éleveur","Apiculteur","Transporteur","Acheteur","ANEM","Travailleur"])
+        wilaya  = st.selectbox(_("wilaya"), WILAYA_NAMES)
+        commune = st.selectbox(_("commune"), get_communes(wilaya))
+        bio     = st.text_area("Bio (optionnel)", height=70)
 
-        if st.button("S'inscrire", key="register_submit_btn", use_container_width=True, type="primary"):
-            errors = []
-            if not name.strip():
-                errors.append("Nom requis.")
-            if not validate_phone(phone):
-                errors.append("Numéro de téléphone invalide (format: 0555123456).")
-            if len(pwd) < 6:
-                errors.append("Mot de passe trop court (min. 6 caractères).")
-            if pwd != pwd2:
-                errors.append("Les mots de passe ne correspondent pas.")
-            if errors:
-                for e in errors:
-                    st.error(e)
+        if st.button("Créer mon compte", use_container_width=True, type="primary"):
+            errs = []
+            if not name.strip(): errs.append("Nom requis.")
+            if not valid_phone(phone): errs.append("Téléphone invalide (ex: 0555123456).")
+            if len(pwd) < 6: errs.append("Mot de passe trop court (6 car. min).")
+            if pwd != pwd2: errs.append("Mots de passe différents.")
+            if errs:
+                for e in errs: st.error(e)
             else:
                 try:
-                    query_db(
-                        "INSERT INTO users (name,phone,password,profile_type,wilaya,commune) VALUES (?,?,?,?,?,?)",
-                        (name.strip(), phone.strip(), hash_password(pwd), profile, wilaya, commune),
-                        fetch=False
-                    )
-                    st.success(_("account_created"))
-                    st.session_state.page = "login"
-                    st.rerun()
+                    lat, lon = get_wilaya_coords(wilaya)
+                    qdb("INSERT INTO users (name,phone,password,profile_type,wilaya,commune,lat,lon,bio) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (name.strip(), phone.strip(), hash_pw(pwd), profile, wilaya, commune, lat, lon, bio), fetch=False)
+                    st.success(_("account_ok")); st.session_state.page = "login"; st.rerun()
                 except sqlite3.IntegrityError:
                     st.error(_("phone_used"))
 
+# ── Home ────────────────────────────────────────────────────────────────────────
 def home_page():
     st.markdown("""
-    <div class="main-header">
+    <div class="hero">
         <h1>🌾 AgriConnect</h1>
-        <p>Le carrefour numérique de l'agriculture algérienne</p>
+        <p>La plateforme numérique de l'agriculture algérienne — 58 wilayas, une communauté</p>
     </div>
     """, unsafe_allow_html=True)
 
-    total = query_db("SELECT COUNT(*) as n FROM announcements")[0]["n"]
-    users = query_db("SELECT COUNT(*) as n FROM users")[0]["n"]
-    wilayas_count = query_db("SELECT COUNT(DISTINCT wilaya) as n FROM announcements")[0]["n"]
+    # Alertes urgentes
+    urgent_anns = qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1")
+    if urgent_anns[0]["n"] > 0 and not st.session_state.urgent_shown:
+        st.markdown(f'<div class="urgent-banner">🚨 {urgent_anns[0]["n"]} vente(s) urgente(s) disponible(s) — <a href="#" style="color:white;">Voir maintenant ↗</a></div>', unsafe_allow_html=True)
+        if st.button("🚨 Voir les ventes urgentes", type="primary"):
+            st.session_state.page = "alerts"; st.rerun()
 
-    c1, c2, c3 = st.columns(3)
-    c1.markdown(f'<div class="stat-card"><div class="number">{total}</div><div class="label">Annonces actives</div></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="stat-card"><div class="number">{users}</div><div class="label">Utilisateurs inscrits</div></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="stat-card"><div class="number">{wilayas_count}</div><div class="label">Wilayas couvertes</div></div>', unsafe_allow_html=True)
+    # Stats
+    c1, c2, c3, c4 = st.columns(4)
+    total_ann = qdb("SELECT COUNT(*) as n FROM announcements")[0]["n"]
+    total_usr = qdb("SELECT COUNT(*) as n FROM users")[0]["n"]
+    wil_cov   = qdb("SELECT COUNT(DISTINCT wilaya) as n FROM announcements")[0]["n"]
+    nb_coop   = qdb("SELECT COUNT(*) as n FROM cooperatives")[0]["n"]
+    for col, num, lbl in [
+        (c1, total_ann, "Annonces"), (c2, total_usr, "Membres"),
+        (c3, wil_cov, "Wilayas"), (c4, nb_coop, "Coopératives"),
+    ]:
+        col.markdown(f'<div class="stat"><div class="num">{num}</div><div class="lbl">{lbl}</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    c_s, c_w, c_b = st.columns([3, 2, 1])
-    with c_s:
-        search = st.text_input(_("search"), placeholder="Ex: pommes de terre, tracteur...",
-                               value=st.session_state.search_query, key="home_search", label_visibility="collapsed")
-    with c_w:
-        wilaya_f = st.selectbox(_("wilaya"), ["Toutes"] + list(WILAYAS.keys()), key="home_wilaya", label_visibility="collapsed")
-    with c_b:
-        if st.button(_("search"), key="home_search_btn", use_container_width=True, type="primary"):
-            st.session_state.search_query = search
+    # Recherche
+    sc, sw, sb = st.columns([3, 2, 1])
+    with sc:
+        q = st.text_input(_("search"), value=st.session_state.search_q, placeholder="Ex: pomme de terre, tracteur, ouvriers…", label_visibility="collapsed")
+    with sw:
+        wf = st.selectbox(_("wilaya"), ["Toutes"] + WILAYA_NAMES, label_visibility="collapsed")
+    with sb:
+        if st.button("🔍", use_container_width=True): st.session_state.search_q = q
 
-    sql = "SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE 1=1"
+    sql = "SELECT a.*, u.name AS author FROM announcements a JOIN users u ON a.user_id=u.id WHERE 1=1"
     params = []
-    if search:
-        sql += " AND (a.title LIKE ? OR a.description LIKE ?)"
-        params += [f"%{search}%", f"%{search}%"]
-    if wilaya_f != "Toutes":
-        sql += " AND a.wilaya=?"
-        params.append(wilaya_f)
-    sql += " ORDER BY a.created_at DESC LIMIT 12"
+    if q:
+        sql += " AND (a.title LIKE ? OR a.description LIKE ?)"; params += [f"%{q}%", f"%{q}%"]
+    if wf != "Toutes":
+        sql += " AND a.wilaya=?"; params.append(wf)
+    sql += " ORDER BY a.is_urgent DESC, a.created_at DESC LIMIT 12"
 
-    annonces = query_db(sql, tuple(params))
-
-    st.markdown(f"### 📌 {_('my_offers')} ({len(annonces)})")
-    if annonces:
-        for i in range(0, len(annonces), 3):
+    anns = qdb(sql, tuple(params))
+    st.markdown(f"### 📌 Dernières annonces ({len(anns)})")
+    if anns:
+        for i in range(0, len(anns), 3):
             cols = st.columns(3)
             for j in range(3):
-                if i + j < len(annonces):
-                    with cols[j]:
-                        render_announce_card(annonces[i + j])
+                if i+j < len(anns):
+                    with cols[j]: render_card(anns[i+j], "home")
     else:
-        st.markdown(f'<div class="no-announce">🌿 {_("no_announces")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="no-announce">🌿 {_("no_ann")}</div>', unsafe_allow_html=True)
 
+# ── Generic announce page ──────────────────────────────────────────────────────
 PAGE_SIZE = 6
 
-def generic_announce_page(module_type: str, fields_config: list, filters: list):
-    tab1, tab2, tab3 = st.tabs([f"📋 {_('list')}", f"➕ {_('publish')}", f"🗺️ {_('map')}"])
+def generic_page(mod, fields, filters):
+    t1, t2, t3 = st.tabs([f"📋 {_('list')}", f"➕ {_('publish')}", f"🗺️ {_('map')}"])
 
-    with tab1:
-        filter_cols = st.columns(max(len(filters), 1))
-        where_clauses = ["a.type=?"]
-        params = [module_type]
+    with t1:
+        fc = st.columns(max(len(filters), 1))
+        where = ["a.type=?"]
+        params = [mod]
+        _filter_state = {}
 
         for i, f in enumerate(filters):
-            with filter_cols[i % len(filter_cols)]:
+            with fc[i % len(fc)]:
                 if f == "wilaya":
-                    val = st.selectbox(_("wilaya"), ["Toutes"] + list(WILAYAS.keys()), key=f"f_w_{module_type}")
-                    if val != "Toutes":
-                        where_clauses.append("a.wilaya=?")
-                        params.append(val)
+                    v = st.selectbox(_("wilaya"), ["Toutes"] + WILAYA_NAMES, key=f"fw_{mod}")
+                    if v != "Toutes": where.append("a.wilaya=?"); params.append(v)
                 elif f == "price_max":
-                    val = st.number_input("Prix max (DA)", min_value=0, step=500, key=f"f_p_{module_type}")
-                    if val > 0:
-                        where_clauses.append("a.price<=?")
-                        params.append(val)
-                elif f == "type_produit":
-                    opts = ["Tous","Légumes","Fruits","Céréales","Bétail","Miel","Lait","Autre"]
-                    val = st.selectbox("Type produit", opts, key=f"f_tp_{module_type}")
-                    if val != "Tous":
-                        st.session_state[f"_filter_product_type_{module_type}"] = val
-                    else:
-                        st.session_state[f"_filter_product_type_{module_type}"] = None
-                elif f == "equipment_type":
-                    opts = ["Tous","Tracteur","Moissonneuse","Charrue","Remorque","Irrigation","Épandeur","Semoir","Autre"]
-                    val = st.selectbox("Type matériel", opts, key=f"f_et_{module_type}")
-                    st.session_state[f"_filter_eq_type_{module_type}"] = val if val != "Tous" else None
+                    v = st.number_input("Prix max (DA)", 0, step=500, key=f"fp_{mod}")
+                    if v > 0: where.append("a.price<=?"); params.append(v)
+                elif f == "eq_type":
+                    v = st.selectbox("Type", ["Tous","Tracteur","Moissonneuse","Charrue","Irrigation","Remorque","Autre"], key=f"feq_{mod}")
+                    _filter_state["equipment_type"] = None if v == "Tous" else v
                 elif f == "offer_type":
-                    val = st.selectbox("Offre", ["Tous","Vente","Location"], key=f"f_ot_{module_type}")
-                    st.session_state[f"_filter_offer_type_{module_type}"] = val if val != "Tous" else None
+                    v = st.selectbox("Offre", ["Tous","Vente","Location"], key=f"fot_{mod}")
+                    _filter_state["offer_type"] = None if v == "Tous" else v
+                elif f == "product_type":
+                    v = st.selectbox("Type", ["Tous","Légumes","Fruits","Céréales","Bétail","Miel","Autre"], key=f"fpt_{mod}")
+                    _filter_state["product_type"] = None if v == "Tous" else v
 
-        sql = f"SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE {' AND '.join(where_clauses)} ORDER BY a.created_at DESC"
-        annonces = query_db(sql, tuple(params))
+        sql = f"SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE {' AND '.join(where)} ORDER BY a.is_urgent DESC, a.created_at DESC"
+        anns = qdb(sql, tuple(params))
 
-        def match_json_filter(a, key, session_key):
-            fval = st.session_state.get(session_key)
-            if not fval:
-                return True
-            try:
-                d = json.loads(a["data"] or "{}")
-                return d.get(key, "").lower() == fval.lower()
-            except Exception:
-                return True
+        def jmatch(a, key):
+            fv = _filter_state.get(key)
+            if not fv: return True
+            try: return json.loads(a["data"] or "{}").get(key,"").lower() == fv.lower()
+            except: return True
 
-        annonces = [
-            a for a in annonces
-            if match_json_filter(a, "product_type", f"_filter_product_type_{module_type}")
-            and match_json_filter(a, "equipment_type", f"_filter_eq_type_{module_type}")
-            and match_json_filter(a, "offer_type", f"_filter_offer_type_{module_type}")
-        ]
+        anns = [a for a in anns if all(jmatch(a, k) for k in _filter_state)]
 
-        total = len(annonces)
-        page_key = f"_page_{module_type}"
-        if page_key not in st.session_state:
-            st.session_state[page_key] = 0
-        pg = st.session_state[page_key]
-        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-        pg = min(pg, total_pages - 1)
+        total = len(anns)
+        pg_key = f"pg_{mod}"
+        if pg_key not in st.session_state: st.session_state[pg_key] = 0
+        pg = min(st.session_state[pg_key], max(0, (total-1)//PAGE_SIZE))
+        page_anns = anns[pg*PAGE_SIZE:(pg+1)*PAGE_SIZE]
 
-        page_annonces = annonces[pg * PAGE_SIZE:(pg + 1) * PAGE_SIZE]
-
-        if page_annonces:
-            for i in range(0, len(page_annonces), 3):
+        if page_anns:
+            for i in range(0, len(page_anns), 3):
                 cols = st.columns(3)
                 for j in range(3):
-                    if i + j < len(page_annonces):
-                        with cols[j]:
-                            render_announce_card(page_annonces[i + j])
+                    if i+j < len(page_anns):
+                        with cols[j]: render_card(page_anns[i+j], mod)
         else:
-            st.markdown(f'<div class="no-announce">🌿 {_("no_announces")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="no-announce">🌿 {_("no_ann")}</div>', unsafe_allow_html=True)
 
-        p1, p2, p3 = st.columns([1, 2, 1])
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        p1, p2, p3 = st.columns([1,2,1])
         with p1:
             if pg > 0:
-                if st.button(_("prev"), key=f"prev_{module_type}"):
-                    st.session_state[page_key] = pg - 1; st.rerun()
+                if st.button(_("prev"), key=f"prev_{mod}"): st.session_state[pg_key] = pg-1; st.rerun()
         with p2:
-            st.markdown(f"<p style='text-align:center;color:#6b7280;'>{_('page')} {pg+1} / {total_pages} ({total} résultats)</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align:center;color:var(--muted);font-size:.8rem;'>{_('page')} {pg+1}/{total_pages} · {total} résultats</p>", unsafe_allow_html=True)
         with p3:
-            if pg < total_pages - 1:
-                if st.button(_("next"), key=f"next_{module_type}"):
-                    st.session_state[page_key] = pg + 1; st.rerun()
+            if pg < total_pages-1:
+                if st.button(_("next"), key=f"next_{mod}"): st.session_state[pg_key] = pg+1; st.rerun()
 
-    with tab2:
-        if not st.session_state.user:
-            st.warning(_("login_required"))
-            return
+    with t2:
+        user = st.session_state.user
+        if not user: st.warning(_("login_req")); return
 
-        with st.form(f"form_{module_type}", clear_on_submit=True):
-            st.subheader(f"➕ {_('publish')}")
+        with st.form(f"pub_{mod}", clear_on_submit=True):
+            st.subheader(f"➕ Publier une annonce — {_(mod)}")
             c1, c2 = st.columns(2)
-            title = c1.text_input("Titre *", key=f"pub_title_{module_type}")
-            unit  = c2.text_input("Unité (ex: DA/kg)", key=f"pub_unit_{module_type}")
-            desc  = st.text_area("Description", key=f"pub_desc_{module_type}")
-            c3, c4 = st.columns(2)
-            price  = c3.number_input("Prix (DA) *", min_value=0.0, step=100.0, key=f"pub_price_{module_type}")
-            wilaya = c4.selectbox(_("wilaya"), list(WILAYAS.keys()), key=f"pub_w_{module_type}")
-            commune = st.selectbox(_("commune"), WILAYAS[wilaya], key=f"pub_c_{module_type}")
+            title   = c1.text_input("Titre *")
+            unit    = c2.text_input("Unité (ex: DA/kg)")
+            desc    = st.text_area("Description")
+            c3, c4  = st.columns(2)
+            price   = c3.number_input("Prix (DA) *", 0.0, step=100.0)
+            wilaya  = c4.selectbox(_("wilaya"), WILAYA_NAMES, key=f"pw_{mod}")
+            commune = st.selectbox(_("commune"), get_communes(wilaya), key=f"pc_{mod}")
+
+            # Options spéciales
+            col_opt1, col_opt2 = st.columns(2)
+            is_urgent    = col_opt1.checkbox("🚨 Vente urgente (alerte push)")
+            is_traceable = col_opt2.checkbox("🔍 Activer la traçabilité QR code")
+            urgent_disc  = 0
+            if is_urgent:
+                urgent_disc = st.slider("Réduction urgente (%)", 5, 40, 15)
 
             extra = {}
-            if fields_config:
-                st.markdown("**Détails supplémentaires**")
-                f_cols = st.columns(min(len(fields_config), 2))
-                for idx, (field, label, opts) in enumerate(fields_config):
-                    with f_cols[idx % 2]:
-                        if opts == "text":
-                            extra[field] = st.text_input(label, key=f"fc_{module_type}_{field}")
-                        elif opts == "number":
-                            extra[field] = st.number_input(label, min_value=0, key=f"fc_{module_type}_{field}")
-                        elif isinstance(opts, list):
-                            extra[field] = st.selectbox(label, opts, key=f"fc_{module_type}_{field}")
+            if fields:
+                st.markdown("**Informations complémentaires**")
+                fc2 = st.columns(min(len(fields), 2))
+                for idx, (field, label, opts) in enumerate(fields):
+                    with fc2[idx % 2]:
+                        if opts == "text":   extra[field] = st.text_input(label, key=f"f_{mod}_{field}")
+                        elif opts == "num":  extra[field] = st.number_input(label, 0, key=f"f_{mod}_{field}")
+                        elif isinstance(opts, list): extra[field] = st.selectbox(label, opts, key=f"f_{mod}_{field}")
 
-            images = st.file_uploader("📷 Photos (max 5)", type=["jpg","jpeg","png"],
-                                      accept_multiple_files=True, key=f"imgs_{module_type}")
-
-            submitted = st.form_submit_button(_("publish"), use_container_width=True, type="primary")
+            imgs = st.file_uploader("📷 Photos (max 5)", type=["jpg","jpeg","png"], accept_multiple_files=True, key=f"img_{mod}")
+            submitted = st.form_submit_button("📤 " + _("publish"), use_container_width=True, type="primary")
 
         if submitted:
-            if not title.strip():
-                st.error(_("fill_required"))
+            if not title.strip(): st.error(_("fill_req"))
             else:
-                imgs_b64 = []
-                if images:
-                    for img in images[:5]:
-                        b64 = image_to_base64(img)
-                        if b64:
-                            imgs_b64.append(b64)
-                query_db(
-                    "INSERT INTO announcements (user_id,type,title,description,price,unit,wilaya,commune,data,images) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (st.session_state.user["id"], module_type, title.strip(), desc, price,
-                     unit, wilaya, commune, json.dumps(extra), ";".join(imgs_b64)),
+                imgs_b64 = [b for b in [img_to_b64(img) for img in (imgs or [])[:5]] if b]
+                lat, lon = get_wilaya_coords(wilaya)
+                qr_data = json.dumps({"title": title, "wilaya": wilaya, "user": user["name"], "date": date.today().isoformat()}) if is_traceable else ""
+                aid = qdb(
+                    "INSERT INTO announcements (user_id,type,title,description,price,unit,wilaya,commune,lat,lon,data,images,is_urgent,urgent_discount,is_traceable,qr_data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (user["id"], mod, title.strip(), desc, price, unit, wilaya, commune, lat, lon,
+                     json.dumps(extra), ";".join(imgs_b64), int(is_urgent), urgent_disc, int(is_traceable), qr_data),
                     fetch=False
                 )
-                st.success(_("published"))
+                if is_urgent:
+                    qdb("INSERT INTO alerts (user_id,wilaya,type,message) VALUES (?,?,?,?)",
+                        (user["id"], wilaya, "urgent",
+                         f"🚨 Vente urgente : «{title}» à {price} DA/{unit} — {wilaya}"), fetch=False)
+                st.success(_("published") + (" QR code traçabilité généré ✅" if is_traceable else ""))
                 st.rerun()
 
-    with tab3:
+    with t3:
         if not HAS_FOLIUM:
-            st.info("Installez `streamlit-folium` et `folium` pour voir la carte.")
+            st.info("Installez `streamlit-folium` et `folium` pour activer la carte.")
         else:
-            m = folium.Map(location=[28.0339, 1.6596], zoom_start=5)
-            anns = query_db(f"SELECT * FROM announcements WHERE type=? AND lat!=0 AND lon!=0", (module_type,))
-            for a in anns:
-                if a["lat"] and a["lon"]:
-                    folium.Marker(
-                        [a["lat"], a["lon"]],
-                        popup=f"{a['title']}<br>{a['price']} {a['unit']}",
-                        icon=folium.Icon(color="green", icon="leaf")
-                    ).add_to(m)
+            m = folium.Map(location=[28.0, 2.5], zoom_start=5, tiles="OpenStreetMap")
+            anns_map = qdb(f"SELECT * FROM announcements WHERE type=? AND lat!=0 AND lon!=0", (mod,))
+            for a in anns_map:
+                color = "red" if a["is_urgent"] else "green"
+                folium.Marker(
+                    [a["lat"], a["lon"]],
+                    popup=f"<b>{a['title']}</b><br>{a['price']} {a['unit']}",
+                    tooltip=a["title"],
+                    icon=folium.Icon(color=color, icon="leaf", prefix="fa")
+                ).add_to(m)
             st_folium(m, width=700, height=450)
 
+# ── Module pages ───────────────────────────────────────────────────────────────
 def market_page():
     st.markdown("### 🥕 " + _("market"))
-    generic_announce_page("market",
-        [("product_type","Type",["Légumes","Fruits","Céréales","Bétail","Miel","Lait","Autre"]),
-         ("quantity","Quantité (kg/t)","number")],
-        ["wilaya","price_max","type_produit"])
+    generic_page("market",
+        [("product_type","Type produit",["Légumes","Fruits","Céréales","Bétail","Lait","Miel","Autre"]),
+         ("quantity","Quantité (kg/t)","num"),
+         ("packaging","Conditionnement",["Vrac","En sacs","En caisses","Palettes"])],
+        ["wilaya","price_max","product_type"])
 
 def job_page():
     st.markdown("### 👷 " + _("job"))
-    generic_announce_page("job",
-        [("contract_type","Type contrat",["Saisonnier","Permanent","Journalier"]),
-         ("skills","Compétences requises","text"),
-         ("duration","Durée (jours)","number"),
-         ("salary","Salaire DA/jour","number")],
+    generic_page("job",
+        [("contract_type","Type contrat",["Saisonnier","Journalier","Permanent"]),
+         ("skills","Compétences","text"),
+         ("duration","Durée (jours)","num"),
+         ("accommodation","Logement",["Non fourni","Fourni","Indemnisé"])],
         ["wilaya","price_max"])
 
 def transport_page():
     st.markdown("### 🚛 " + _("transport"))
-    generic_announce_page("transport",
+    generic_page("transport",
         [("vehicle_type","Véhicule",["Camion","Bétaillère","Frigorifique","Pickup","Semi-remorque"]),
-         ("capacity","Capacité (t)","number"),
-         ("route","Trajet","text")],
+         ("capacity","Capacité (t)","num"),
+         ("route","Trajet","text"),
+         ("frequency","Fréquence",["Journalier","Hebdomadaire","À la demande"])],
         ["wilaya","price_max"])
 
 def grazing_page():
     st.markdown("### 🐑 " + _("grazing"))
-    generic_announce_page("grazing",
-        [("area_ha","Superficie (ha)","number"),
-         ("cover_type","Couvert",["Chaume","Jachère","Herbe","Alfa"]),
-         ("water","Eau disponible",["Oui","Non"]),
-         ("start_date","Date début","text"),
-         ("end_date","Date fin","text"),
-         ("max_animals","Nombre max animaux","number")],
+    generic_page("grazing",
+        [("area_ha","Superficie (ha)","num"),
+         ("cover_type","Couvert",["Chaume","Jachère","Herbe","Alfa","Maquis"]),
+         ("water","Eau disponible",["Oui","Non","Puits"]),
+         ("start_date","Début disponibilité","text"),
+         ("end_date","Fin disponibilité","text"),
+         ("max_animals","Max animaux","num")],
         ["wilaya","price_max"])
 
 def pollination_page():
     st.markdown("### 🐝 " + _("pollination"))
-    generic_announce_page("pollination",
-        [("hive_count","Nombre de ruches","number"),
-         ("bee_race","Race abeilles",["Locale","Saharan","Hybride"]),
-         ("zone","Zone d'intervention","text"),
+    generic_page("pollination",
+        [("hive_count","Nombre de ruches","num"),
+         ("bee_race","Race",["Locale (Apis m. intermissa)","Carnica","Hybride","Saharan"]),
+         ("zone","Zone intervention","text"),
          ("availability","Disponibilité","text")],
         ["wilaya","price_max"])
 
 def fertilizer_page():
     st.markdown("### 🌱 " + _("fertilizer"))
-    generic_announce_page("fertilizer",
-        [("fertilizer_type","Type",["Fumier bovin","Fumier ovin","Fiente volaille","Compost","Autre"]),
-         ("quantity_tons","Quantité (tonnes)","number"),
-         ("packaging","Conditionnement",["Vrac","En sacs","Sur palettes"])],
+    generic_page("fertilizer",
+        [("fertilizer_type","Type",["Fumier bovin","Fumier ovin","Fiente volaille","Compost végétal","NPK","Urée","Phosphate"]),
+         ("quantity_tons","Quantité (t)","num"),
+         ("packaging","Conditionnement",["Vrac","Ensaché 50kg","Sur palettes"])],
         ["wilaya","price_max"])
 
 def equipment_page():
     st.markdown("### 🚜 " + _("equipment"))
-    generic_announce_page("equipment",
-        [("offer_type","Offre",["Vente","Location"]),
-         ("equipment_type","Type",["Tracteur","Moissonneuse","Charrue","Remorque","Irrigation","Épandeur","Semoir","Autre"]),
+    generic_page("equipment",
+        [("offer_type","Offre",["Vente","Location","Échange"]),
+         ("equipment_type","Type",["Tracteur","Moissonneuse","Charrue","Remorque","Irrigation goutte-à-goutte","Épandeur","Semoir","Pulvérisateur","Autre"]),
          ("brand","Marque","text"),
          ("model","Modèle","text"),
-         ("year","Année fabrication","number"),
-         ("state","État",["Neuf","Très bon","Bon","À rénover"]),
-         ("rental_period","Période location",["Heure","Jour","Semaine","Mois"]),
+         ("year","Année fabrication","num"),
+         ("state","État",["Neuf","Très bon","Bon","Fonctionnel","À réviser"]),
+         ("rental_period","Période location",["Heure","Jour","Semaine","Mois","Saison"]),
          ("availability","Disponibilité","text")],
-        ["wilaya","price_max","equipment_type","offer_type"])
+        ["wilaya","price_max","eq_type","offer_type"])
 
-def anem_page():
-    st.markdown("### 🏛️ " + _("anem"))
+# ── WEATHER page ───────────────────────────────────────────────────────────────
+def weather_page():
+    st.markdown("### 🌤️ Météo agricole")
     user = st.session_state.user
-    if not user or user.get("profile_type") != "ANEM":
-        st.error("⛔ " + _("login_required") + " (profil ANEM requis)")
-        return
+    default_w = user["wilaya"] if user else "16 - Alger"
+    wilaya = st.selectbox("Choisir une wilaya", WILAYA_NAMES, index=WILAYA_NAMES.index(default_w) if default_w in WILAYA_NAMES else 15)
 
-    total_jobs  = query_db("SELECT COUNT(*) as n FROM announcements WHERE type='job'")[0]["n"]
-    total_work  = query_db("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur'")[0]["n"]
-    total_valid = query_db("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur' AND is_verified=1")[0]["n"]
-    total_msgs  = query_db("SELECT COUNT(*) as n FROM messages")[0]["n"]
+    lat, lon = get_wilaya_coords(wilaya)
+    with st.spinner("Chargement météo…"):
+        data = get_weather(lat, lon, wilaya)
 
+    cur = data.get("current", {})
+    temp = cur.get("temperature_2m", 0)
+    hum  = cur.get("relative_humidity_2m", 0)
+    wind = cur.get("wind_speed_10m", 0)
+    wc   = cur.get("weathercode", 0)
+    icon, desc = wmo(wc)
+
+    # Current conditions
     c1, c2, c3, c4 = st.columns(4)
-    for col, num, label in [
-        (c1, total_jobs, "Offres d'emploi"),
-        (c2, total_work, "Demandeurs"),
-        (c3, total_valid, "Profils validés"),
-        (c4, total_msgs, "Messages"),
-    ]:
-        col.markdown(f'<div class="stat-card"><div class="number">{num}</div><div class="label">{label}</div></div>', unsafe_allow_html=True)
+    c1.markdown(f'<div class="weather-card"><div style="font-size:2.5rem;">{icon}</div><div class="weather-temp">{temp}°C</div><div class="weather-desc">{desc}</div></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="stat"><div class="num">💧{hum}%</div><div class="lbl">Humidité</div></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="stat"><div class="num">💨{wind:.0f}</div><div class="lbl">Vent km/h</div></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="stat"><div class="num">📍</div><div class="lbl">{wilaya.split(" - ")[1]}</div></div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.subheader("✅ Validation des profils travailleurs")
-    pending = query_db("SELECT * FROM users WHERE profile_type='Travailleur' AND is_verified=0")
-    if pending:
-        for t in pending:
-            with st.expander(f"{t['name']} — {t['phone']} ({t['wilaya']}, {t['commune']})"):
-                if t["documents"]:
-                    st.image(f"data:image/jpeg;base64,{t['documents']}", width=280)
-                col_v, col_r = st.columns(2)
-                with col_v:
-                    if st.button("✅ Valider", key=f"val_{t['id']}", type="primary"):
-                        query_db("UPDATE users SET is_verified=1 WHERE id=?", (t["id"],), fetch=False)
-                        st.success(_("validated"))
-                        st.rerun()
-                with col_r:
-                    if st.button("❌ Rejeter", key=f"rej_{t['id']}"):
-                        query_db("DELETE FROM users WHERE id=? AND profile_type='Travailleur' AND is_verified=0", (t["id"],), fetch=False)
-                        st.rerun()
-    else:
-        st.info(_("pending_none"))
+    # Alerts
+    alerts_weather = []
+    if temp < 2:  alerts_weather.append("🥶 **Risque de gel** — Protégez vos cultures sensibles cette nuit.")
+    if temp > 40: alerts_weather.append("🔥 **Canicule** — Irriguez tôt le matin et en soirée seulement.")
+    if wind > 60: alerts_weather.append("💨 **Vent fort** — Évitez les traitements phytosanitaires.")
+    if hum < 25:  alerts_weather.append("🏜️ **Air très sec** — Risque d'oïdium et d'araignées rouges.")
 
+    if alerts_weather:
+        st.markdown("**⚠️ Alertes agrométéo :**")
+        for a in alerts_weather:
+            st.warning(a)
+
+    # 7-day forecast
     st.markdown("---")
-    st.subheader("📋 Offres d'emploi publiées")
-    offres = query_db("SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE a.type='job' ORDER BY a.created_at DESC")
-    for o in offres:
-        cnt = query_db("SELECT COUNT(*) as n FROM messages WHERE announcement_id=?", (o["id"],))[0]["n"]
-        with st.expander(f"📌 {o['title']} — {o['wilaya']} (📩 {cnt} candidatures)"):
-            st.markdown(f"**Description :** {o['description']}")
-            st.markdown(f"**Prix :** {o['price']} {o['unit']}")
-            postulants = query_db(
-                "SELECT DISTINCT u.name, u.phone FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.announcement_id=?",
-                (o["id"],)
+    st.subheader("📅 Prévisions 7 jours")
+    daily = data.get("daily", {})
+    days  = daily.get("time", [])
+    tmax  = daily.get("temperature_2m_max", [])
+    tmin  = daily.get("temperature_2m_min", [])
+    rain  = daily.get("precipitation_sum", [])
+    wcodes= daily.get("weathercode", [])
+
+    cols = st.columns(len(days[:7]))
+    for i, d in enumerate(days[:7]):
+        d_obj = datetime.strptime(d, "%Y-%m-%d")
+        day_name = d_obj.strftime("%a %d")
+        ico, _ = wmo(wcodes[i] if i < len(wcodes) else 0)
+        tmin_v = tmin[i] if i < len(tmin) else 0
+        tmax_v = tmax[i] if i < len(tmax) else 0
+        rain_v = rain[i] if i < len(rain) else 0
+        with cols[i]:
+            st.markdown(f"""
+            <div class="stat" style="padding:.6rem;">
+                <div style="font-size:1.5rem;">{ico}</div>
+                <div style="font-size:.75rem;font-weight:600;color:#374151;">{day_name}</div>
+                <div style="font-size:.8rem;color:#dc2626;">{tmax_v:.0f}°</div>
+                <div style="font-size:.75rem;color:#2563eb;">{tmin_v:.0f}°</div>
+                <div style="font-size:.7rem;color:#6b7280;">💧{rain_v:.0f}mm</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # Agroconseils basés sur la météo
+    st.markdown("---")
+    st.subheader("🌾 Conseils agronomiques du jour")
+    conseils = []
+    if temp > 25 and hum < 40:
+        conseils.append("☀️ **Irrigation** : Conditions sèches et chaudes — irriguez au lever du soleil ou après 18h.")
+    if sum(rain[:3]) > 10:
+        conseils.append("🌧️ **Fongicides** : Pluies prévues — appliquez préventivement un fongicide cuivrique sur vigne et tomate.")
+    if 10 < temp < 20 and hum > 60:
+        conseils.append("🦠 **Mildiou** : Conditions favorables au développement — surveillance renforcée recommandée.")
+    if wind > 20:
+        conseils.append("💨 **Traitements** : Vent > 20 km/h — reportez les pulvérisations pour éviter la dérive.")
+    if not conseils:
+        conseils.append("✅ **Conditions favorables** — Bonne période pour les travaux agricoles habituels.")
+
+    for c in conseils:
+        st.info(c)
+
+# ── PRICES page ────────────────────────────────────────────────────────────────
+def prices_page():
+    st.markdown("### 📊 Prix & Tendances des marchés")
+
+    products = ["Pomme de terre", "Tomate", "Blé dur", "Oignon", "Dattes Deglet"]
+    wilayas_list = ["31 - Oran", "16 - Alger", "19 - Sétif", "39 - El Oued", "25 - Constantine"]
+
+    col_p, col_w = st.columns(2)
+    prod = col_p.selectbox("Produit", products)
+    wil  = col_w.selectbox("Wilaya", wilayas_list)
+
+    rows = qdb("SELECT price, recorded_at FROM price_history WHERE product=? AND wilaya=? ORDER BY recorded_at", (prod, wil))
+
+    if rows:
+        dates  = [r["recorded_at"] for r in rows]
+        prices = [r["price"] for r in rows]
+
+        # Tendance
+        if len(prices) >= 2:
+            trend = prices[-1] - prices[-7] if len(prices) >= 7 else prices[-1] - prices[0]
+            trend_str = f'<span class="price-up">▲ +{trend:.1f} DA</span>' if trend > 0 else f'<span class="price-down">▼ {trend:.1f} DA</span>'
+        else:
+            trend_str = "—"
+
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f'<div class="stat"><div class="num">{prices[-1]:.0f} DA</div><div class="lbl">Prix actuel</div></div>', unsafe_allow_html=True)
+        c2.markdown(f'<div class="stat"><div class="num">{trend_str}</div><div class="lbl">Variation 7j</div></div>', unsafe_allow_html=True)
+        c3.markdown(f'<div class="stat"><div class="num">{sum(prices)/len(prices):.0f} DA</div><div class="lbl">Moyenne 30j</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if HAS_PLOTLY:
+            # Prédiction simple (régression linéaire basique)
+            n = len(prices)
+            x_vals = list(range(n))
+            mean_x = sum(x_vals) / n
+            mean_y = sum(prices) / n
+            num_lr  = sum((x_vals[i] - mean_x) * (prices[i] - mean_y) for i in range(n))
+            den_lr  = sum((x_vals[i] - mean_x) ** 2 for i in range(n))
+            slope   = num_lr / den_lr if den_lr != 0 else 0
+            intercept = mean_y - slope * mean_x
+
+            future_days = 7
+            pred_prices = [intercept + slope * (n + i) for i in range(future_days)]
+            pred_dates  = [(date.today() + timedelta(days=i+1)).isoformat() for i in range(future_days)]
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=dates, y=prices, mode='lines+markers', name='Historique', line=dict(color='#2e7d32', width=2)))
+            fig.add_trace(go.Scatter(x=pred_dates, y=[round(p, 1) for p in pred_prices], mode='lines+markers', name='Prévision 7j', line=dict(color='#f59e0b', width=2, dash='dash')))
+            fig.update_layout(
+                title=f"{prod} — {wil.split(' - ')[1]}",
+                xaxis_title="Date", yaxis_title="Prix (DA/kg)",
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Sora, sans-serif"), height=350,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
             )
-            if postulants:
-                st.markdown("**Candidats :**")
-                for p in postulants:
-                    st.write(f"• {p['name']} — {p['phone']}")
+            st.plotly_chart(fig, use_container_width=True)
 
-def messages_page():
-    st.markdown("### 💬 " + _("messages"))
-    user = st.session_state.user
-    if not user:
-        st.warning(_("login_required"))
-        return
+            # Conseil basé sur tendance
+            if slope > 0.3:
+                st.success(f"📈 **Tendance haussière** — Bon moment pour **vendre** {prod}. Prix attendu dans 7 jours : {pred_prices[-1]:.0f} DA.")
+            elif slope < -0.3:
+                st.warning(f"📉 **Tendance baissière** — Préférez **vendre maintenant** ou stocker si vous le pouvez. Prix attendu : {pred_prices[-1]:.0f} DA.")
+            else:
+                st.info(f"➡️ **Prix stable** — Pas de tendance forte sur {prod} pour les 7 prochains jours.")
+        else:
+            st.info("Installez `plotly` pour les graphiques de prix.")
 
-    if st.session_state.msg_to:
-        other = query_db("SELECT name FROM users WHERE id=?", (st.session_state.msg_to,))
-        if not other:
-            st.session_state.msg_to = None
-            st.rerun()
-            return
+    # Tableau comparatif multi-wilayas
+    st.markdown("---")
+    st.subheader("🗺️ Comparaison entre wilayas")
+    latest = {}
+    for w in wilayas_list:
+        r = qdb("SELECT price FROM price_history WHERE product=? AND wilaya=? ORDER BY recorded_at DESC LIMIT 1", (prod, w))
+        if r: latest[w.split(" - ")[1]] = r[0]["price"]
 
-        st.subheader(f"Conversation avec {other[0]['name']}")
-        if st.button("← Retour aux conversations", key="back_convo"):
-            st.session_state.msg_to = None
-            st.session_state.msg_announce = None
-            st.rerun()
-
-        msgs = query_db(
-            """SELECT * FROM messages
-               WHERE (sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?)
-               ORDER BY created_at""",
-            (user["id"], st.session_state.msg_to, st.session_state.msg_to, user["id"])
+    if latest and HAS_PLOTLY:
+        wnames = list(latest.keys())
+        wprices = [latest[w] for w in wnames]
+        colors = ["#2e7d32" if p == min(wprices) else ("#dc2626" if p == max(wprices) else "#43a047") for p in wprices]
+        fig2 = go.Figure(go.Bar(x=wnames, y=wprices, marker_color=colors, text=[f"{p:.0f} DA" for p in wprices], textposition='auto'))
+        fig2.update_layout(
+            title=f"Prix de {prod} par wilaya (aujourd'hui)",
+            yaxis_title="DA/kg", plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)', height=280,
         )
+        st.plotly_chart(fig2, use_container_width=True)
+        min_w = min(latest, key=latest.get)
+        max_w = max(latest, key=latest.get)
+        st.info(f"💡 Achetez à **{min_w}** ({latest[min_w]:.0f} DA) et revendez à **{max_w}** ({latest[max_w]:.0f} DA) — écart : **{latest[max_w]-latest[min_w]:.0f} DA/kg**")
 
-        st.markdown('<div style="max-height:400px;overflow-y:auto;padding:10px;background:#f9fafb;border-radius:12px;margin-bottom:12px;">', unsafe_allow_html=True)
-        for m in msgs:
-            is_me = m["sender_id"] == user["id"]
-            css = "msg-bubble-me" if is_me else "msg-bubble-other"
-            align = "right" if is_me else "left"
-            st.markdown(
-                f'<div style="text-align:{align}"><div class="{css}">{m["content"]}<div class="msg-time">{m["created_at"]}</div></div></div>',
-                unsafe_allow_html=True
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
+# ── ALERTS page ────────────────────────────────────────────────────────────────
+def alerts_page():
+    st.markdown("### 🚨 Alertes & Ventes urgentes")
 
-        with st.form("send_msg", clear_on_submit=True):
-            txt = st.text_area("Votre message...", height=80)
-            if st.form_submit_button(_("send"), use_container_width=True, type="primary"):
-                if txt.strip():
-                    query_db(
-                        "INSERT INTO messages (sender_id,receiver_id,announcement_id,content) VALUES (?,?,?,?)",
-                        (user["id"], st.session_state.msg_to, st.session_state.msg_announce, txt.strip()),
-                        fetch=False
-                    )
+    # Ventes urgentes
+    urgent = qdb("SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE a.is_urgent=1 ORDER BY a.created_at DESC")
+    if urgent:
+        st.markdown(f"**{len(urgent)} vente(s) urgente(s) disponible(s)**")
+        for a in urgent:
+            disc = a["urgent_discount"] or 0
+            orig_p = a["price"] / (1 - disc/100) if disc > 0 else a["price"]
+            with st.container():
+                st.markdown(f"""
+                <div class="urgent-banner">
+                    🚨 <strong>{a['title']}</strong> — {a['author']} — {a['wilaya']}
+                    <br><span style="font-size:.8rem;">Prix urgent: <strong>{a['price']:.0f} DA/{a['unit']}</strong>
+                    {f'(−{disc}% vs {orig_p:.0f} DA)' if disc>0 else ''}</span>
+                </div>
+                """, unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("💬 Contacter", key=f"urg_msg_{a['id']}", use_container_width=True, type="primary"):
+                        st.session_state.msg_to = a["user_id"]; st.session_state.page = "messages"; st.rerun()
+                with c2:
+                    if st.button("📋 Voir l'annonce", key=f"urg_view_{a['id']}", use_container_width=True):
+                        st.session_state.page = a["type"]; st.rerun()
+    else:
+        st.info("Aucune vente urgente en ce moment. 🎉")
+
+    st.markdown("---")
+    # Publish urgent
+    st.subheader("📢 Publier une vente urgente")
+    if not st.session_state.user:
+        st.warning(_("login_req"))
+    else:
+        with st.form("urgent_form", clear_on_submit=True):
+            title   = st.text_input("Titre de l'annonce *")
+            c1, c2  = st.columns(2)
+            price   = c1.number_input("Prix urgent (DA)", 0.0, step=100.0)
+            unit    = c2.text_input("Unité (ex: kg, t)")
+            disc    = st.slider("Réduction par rapport au prix normal (%)", 0, 50, 15)
+            wilaya  = st.selectbox(_("wilaya"), WILAYA_NAMES)
+            desc    = st.text_area("Message d'urgence", placeholder="Ex: 500 kg de tomates doivent être vendus avant demain, calibre A…")
+            mod_type = st.selectbox("Type", ["market","equipment","grazing","transport"])
+            if st.form_submit_button("🚨 Publier en urgence", use_container_width=True, type="primary"):
+                if title.strip():
+                    lat, lon = get_wilaya_coords(wilaya)
+                    qdb("INSERT INTO announcements (user_id,type,title,description,price,unit,wilaya,commune,lat,lon,is_urgent,urgent_discount) VALUES (?,?,?,?,?,?,?,?,?,?,1,?)",
+                        (st.session_state.user["id"], mod_type, title, desc, price, unit, wilaya, get_communes(wilaya)[0], lat, lon, disc), fetch=False)
+                    qdb("INSERT INTO alerts (user_id,wilaya,type,message) VALUES (?,?,?,?)",
+                        (st.session_state.user["id"], wilaya, "urgent", f"🚨 {title} — {price} DA/{unit}"), fetch=False)
+                    st.success("Alerte urgente publiée ! Tous les membres à proximité ont été notifiés. ✅")
                     st.rerun()
-    else:
-        contacts = query_db(
-            """SELECT DISTINCT u.id, u.name, u.profile_type,
-               MAX(m.created_at) as last_msg
-               FROM users u
-               JOIN messages m ON u.id IN (m.sender_id, m.receiver_id)
-               WHERE (m.sender_id=? OR m.receiver_id=?) AND u.id!=?
-               GROUP BY u.id ORDER BY last_msg DESC""",
-            (user["id"],) * 3
-        )
-        if contacts:
-            for c in contacts:
-                col_n, col_b = st.columns([4, 1])
-                col_n.markdown(f"**{c['name']}** — *{c['profile_type']}*")
-                with col_b:
-                    if st.button("Ouvrir", key=f"open_{c['id']}", use_container_width=True):
-                        st.session_state.msg_to = c["id"]
-                        st.rerun()
-                st.markdown("---")
-        else:
-            st.info(_("no_convo"))
 
-def reviews_page():
-    st.markdown("### ⭐ " + _("reviews"))
+    st.markdown("---")
+    # Alertes météo
+    st.subheader("🌤️ Alertes météo par wilaya")
+    if st.session_state.user:
+        uw = st.session_state.user.get("wilaya", "16 - Alger")
+        lat, lon = get_wilaya_coords(uw)
+        data = get_weather(lat, lon)
+        cur = data.get("current", {})
+        temp = cur.get("temperature_2m", 20)
+        rain_sum = sum(data.get("daily", {}).get("precipitation_sum", [0])[:3])
+        wind = cur.get("wind_speed_10m", 0)
+
+        alerts_m = []
+        if temp < 3:  alerts_m.append(("🥶", "Gel imminent", f"T° = {temp}°C — Couvrez les cultures fragiles.", "error"))
+        if temp > 42: alerts_m.append(("🔥", "Canicule", f"T° = {temp}°C — Stress hydrique maximum.", "error"))
+        if rain_sum > 15: alerts_m.append(("🌧️", "Fortes pluies prévues", f"{rain_sum:.0f}mm sur 3 jours — Risque mildiou élevé.", "warning"))
+        if wind > 60: alerts_m.append(("💨", "Vent violent", f"{wind:.0f} km/h — Danger pour serres et récoltes.", "warning"))
+        if not alerts_m: alerts_m.append(("✅", "Conditions normales", f"Météo favorable à {uw.split(' - ')[1]}.", "success"))
+
+        for icon_a, title_a, msg_a, typ_a in alerts_m:
+            if typ_a == "error": st.error(f"{icon_a} **{title_a}** — {msg_a}")
+            elif typ_a == "warning": st.warning(f"{icon_a} **{title_a}** — {msg_a}")
+            else: st.success(f"{icon_a} **{title_a}** — {msg_a}")
+
+# ── AI ASSISTANT page ──────────────────────────────────────────────────────────
+def assistant_page():
+    st.markdown("### 🤖 Assistant agricole IA")
     user = st.session_state.user
+    user_wilaya = user["wilaya"] if user else ""
+
+    # Présentation
+    st.markdown("""
+    <div style="background:var(--green-pale);border-left:4px solid var(--green);padding:12px 16px;border-radius:8px;margin-bottom:1rem;">
+    <strong>🌿 Bienvenue</strong> — Posez-moi vos questions sur les cultures, maladies, prix, calendriers agricoles, subventions FNRDA, et plus encore.
+    Je connais les 58 wilayas algériennes et les pratiques locales.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Questions suggérées
+    st.markdown("**💡 Questions fréquentes :**")
+    suggestions = [
+        "Quand planter les tomates ?",
+        "Comment traiter le mildiou ?",
+        "Prix de la pomme de terre",
+        "Aides FNRDA 2026",
+        "Conseils irrigation goutte-à-goutte",
+        "Quand récolter les dattes ?",
+    ]
+    cols = st.columns(3)
+    for i, sug in enumerate(suggestions):
+        with cols[i % 3]:
+            if st.button(sug, key=f"sug_{i}", use_container_width=True):
+                st.session_state["ai_pending"] = sug
+
+    st.markdown("---")
+
+    # Historique conversation
+    if user:
+        history = qdb("SELECT role,content FROM ai_conversations WHERE user_id=? ORDER BY created_at DESC LIMIT 20", (user["id"],))
+        history = list(reversed(history))
+    else:
+        history = []
+
+    if history:
+        for msg in history[-10:]:
+            if msg["role"] == "user":
+                st.markdown(f'<div class="user-bubble">🧑‍🌾 {msg["content"]}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="ai-bubble">🤖 {msg["content"]}</div>', unsafe_allow_html=True)
+
+    # Input
+    pending = st.session_state.pop("ai_pending", "")
+    with st.form("ai_form", clear_on_submit=True):
+        question = st.text_input("Votre question…", value=pending, placeholder="Ex: Quand semer le blé dur à Tiaret ?")
+        submitted = st.form_submit_button("Envoyer 📤", use_container_width=True, type="primary")
+
+    if submitted and question.strip():
+        response = ai_respond(question.strip(), user_wilaya)
+        if user:
+            qdb("INSERT INTO ai_conversations (user_id,role,content) VALUES (?,?,?)", (user["id"],"user",question.strip()), fetch=False)
+            qdb("INSERT INTO ai_conversations (user_id,role,content) VALUES (?,?,?)", (user["id"],"assistant",response), fetch=False)
+        st.markdown(f'<div class="user-bubble">🧑‍🌾 {question}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="ai-bubble">🤖 {response}</div>', unsafe_allow_html=True)
+
     if not user:
-        st.warning(_("login_required"))
-        return
+        st.info("💡 Connectez-vous pour sauvegarder l'historique de vos conversations.")
 
-    if st.session_state.review_announce:
-        ann = query_db("SELECT * FROM announcements WHERE id=?", (st.session_state.review_announce,))
-        if not ann:
-            st.session_state.review_announce = None
-            st.rerun()
-            return
+# ── TRACEABILITY ── (accessible via card QR)
+def tracability_page():
+    st.markdown("### 🔍 Traçabilité produit")
+    st.info("📱 Scannez le QR code d'un produit pour voir son origine et sa certification.")
 
-        already = query_db(
-            "SELECT id FROM reviews WHERE announcement_id=? AND reviewer_id=?",
-            (st.session_state.review_announce, user["id"])
-        )
-        if already:
-            st.warning("Vous avez déjà évalué cette annonce.")
-            st.session_state.review_announce = None
-            return
+    ann_id = st.number_input("ID d'annonce tracée", min_value=1, step=1)
+    if st.button("🔍 Consulter la traçabilité", type="primary"):
+        ann = qdb("SELECT * FROM announcements WHERE id=? AND is_traceable=1", (int(ann_id),))
+        if ann:
+            a = ann[0]
+            owner = qdb("SELECT * FROM users WHERE id=?", (a["user_id"],))
+            o = owner[0] if owner else {}
 
-        st.subheader(f"Évaluer : {ann[0]['title']}")
-        if st.button("← Retour", key="back_review"):
-            st.session_state.review_announce = None
-            st.rerun()
-
-        with st.form("review_form"):
-            rating  = st.slider("Note (/5)", 1, 5, 4, key="review_rating")
-            comment = st.text_area("Commentaire", key="review_comment")
-            if st.form_submit_button("Soumettre", type="primary", use_container_width=True):
-                query_db(
-                    "INSERT INTO reviews (announcement_id,reviewer_id,rating,comment) VALUES (?,?,?,?)",
-                    (st.session_state.review_announce, user["id"], rating, comment),
-                    fetch=False
-                )
-                st.success(_("rating_sent"))
-                st.session_state.review_announce = None
-                st.rerun()
-
-        existing = query_db(
-            "SELECT r.*, u.name FROM reviews r JOIN users u ON r.reviewer_id=u.id WHERE r.announcement_id=? ORDER BY r.created_at DESC",
-            (st.session_state.review_announce,)
-        )
-        if existing:
             st.markdown("---")
-            st.markdown("**Avis existants :**")
-            avg = sum(r["rating"] for r in existing) / len(existing)
-            st.markdown(f"Moyenne : {'⭐' * round(avg)} ({avg:.1f}/5, {len(existing)} avis)")
-            for r in existing:
-                st.markdown(f"- **{r['name']}** — {'⭐' * r['rating']} — *{r['comment']}*")
-    else:
-        my_anns = query_db("SELECT id,title FROM announcements WHERE user_id=?", (user["id"],))
-        if my_anns:
-            ids = [str(a["id"]) for a in my_anns]
-            revs = query_db(
-                f"SELECT r.*, u.name FROM reviews r JOIN users u ON r.reviewer_id=u.id WHERE r.announcement_id IN ({','.join(ids)}) ORDER BY r.created_at DESC"
-            )
-            if revs:
-                for r in revs:
-                    st.markdown(f"{'⭐' * r['rating']} **{r['name']}** — *{r['comment']}* <small>({r['created_at'][:10]})</small>", unsafe_allow_html=True)
-            else:
-                st.info("Aucun avis reçu pour vos annonces.")
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.markdown(f"### {a['title']}")
+                st.markdown(f"**🌍 Origine :** {a['wilaya']} — {a['commune']}")
+                st.markdown(f"**📅 Date publication :** {a['created_at'][:10]}")
+                st.markdown(f"**👤 Producteur :** {o.get('name','—')}")
+                st.markdown(f"**✅ Producteur vérifié :** {'Oui ✅' if o.get('is_verified') else 'Non ❌'}")
+                st.markdown(f"**⭐ Réputation :** {o.get('reputation_score', 0):.1f}/5")
+
+                try:
+                    d = json.loads(a["data"] or "{}")
+                    if d:
+                        st.markdown("**📋 Caractéristiques :**")
+                        for k, v in d.items():
+                            st.write(f"• {k.replace('_',' ').title()} : {v}")
+                except: pass
+
+            with c2:
+                qr_b64 = make_qr(f"AgriConnect|ID:{a['id']}|{a['title']}|{a['wilaya']}")
+                if qr_b64:
+                    st.markdown(f'<div class="qr-box"><img src="data:image/png;base64,{qr_b64}" width="140"><br><small>QR Traçabilité #{a["id"]}</small></div>', unsafe_allow_html=True)
+                else:
+                    st.info("Installez `qrcode` pour générer le QR code.")
         else:
-            st.info("Vous n'avez pas encore d'annonces.")
+            st.error("Annonce introuvable ou traçabilité non activée pour cet ID.")
 
-def contract_page():
-    st.markdown("### 📄 " + _("contract"))
+# ── COOPERATIVES page ──────────────────────────────────────────────────────────
+def cooperative_page():
+    st.markdown("### 🤝 Coopératives agricoles numériques")
     user = st.session_state.user
-    if not user:
-        st.warning(_("login_required"))
-        return
 
-    if st.session_state.contract_announce:
-        anns = query_db("SELECT * FROM announcements WHERE id=?", (st.session_state.contract_announce,))
-        if not anns:
-            st.session_state.contract_announce = None
-            st.rerun()
-            return
+    tab1, tab2, tab3 = st.tabs(["📋 Liste", "➕ Créer", "👥 Mes coopératives"])
 
-        ann   = anns[0]
-        owner = query_db("SELECT * FROM users WHERE id=?", (ann["user_id"],))
-        if not owner:
-            st.error("Propriétaire introuvable.")
-            return
-        owner = owner[0]
+    with tab1:
+        coops = qdb("""
+            SELECT c.*, u.name as creator_name,
+                   (SELECT COUNT(*) FROM coop_members cm WHERE cm.coop_id=c.id) as nb_members
+            FROM cooperatives c JOIN users u ON c.creator_id=u.id ORDER BY c.created_at DESC
+        """)
+        if coops:
+            for co in coops:
+                with st.expander(f"🤝 {co['name']} — {co['wilaya']} ({co['nb_members']} membres)"):
+                    st.markdown(f"**Filière :** {co['filiere']} | **Fondateur :** {co['creator_name']}")
+                    st.markdown(f"**Description :** {co['description'] or '—'}")
+                    st.markdown(f"**Créée le :** {co['created_at'][:10]}")
 
-        st.subheader(f"📝 Contrat pour : {ann['title']}")
-        if st.button("← Retour", key="back_contract"):
-            st.session_state.contract_announce = None
-            st.rerun()
+                    # Membres
+                    members = qdb("SELECT u.name, u.wilaya, cm.role FROM coop_members cm JOIN users u ON cm.user_id=u.id WHERE cm.coop_id=?", (co["id"],))
+                    if members:
+                        st.markdown(f"**Membres :** " + ", ".join([f"{m['name']} ({m['role']})" for m in members]))
 
-        c1, c2 = st.columns(2)
-        start_date = c1.date_input("Date de début", date.today(), key="contract_start")
-        end_date   = c2.date_input("Date de fin",   date.today(), key="contract_end")
-        terms_text = st.text_area("Conditions particulières", height=120, key="contract_terms")
-
-        if start_date > end_date:
-            st.error("La date de fin doit être après la date de début.")
-        elif st.button("📥 Générer et télécharger le contrat", type="primary", use_container_width=True, key="generate_contract"):
-            terms = {"start": start_date.isoformat(), "end": end_date.isoformat(), "details": terms_text}
-            pdf_bytes = generate_contract_pdf(ann, user["name"], owner["name"], terms)
-            if pdf_bytes:
-                ext = "pdf" if isinstance(pdf_bytes, bytes) and pdf_bytes[:4] == b'%PDF' else "txt"
-                st.download_button(
-                    label=f"📥 {_('download')} (.{ext})",
-                    data=pdf_bytes,
-                    file_name=f"contrat_{ann['id']}.{ext}",
-                    mime=f"application/{ext}",
-                    use_container_width=True,
-                    key="download_contract"
-                )
-                query_db(
-                    "INSERT INTO contracts (announcement_id,renter_id,owner_id,start_date,end_date,terms,status) VALUES (?,?,?,?,?,?,?)",
-                    (ann["id"], user["id"], owner["id"], start_date.isoformat(), end_date.isoformat(), terms_text, "active"),
-                    fetch=False
-                )
-                st.success(_("contract_created"))
-    else:
-        my_contracts = query_db(
-            """SELECT c.*, a.title as ann_title, u.name as owner_name
-               FROM contracts c
-               JOIN announcements a ON c.announcement_id=a.id
-               JOIN users u ON c.owner_id=u.id
-               WHERE c.renter_id=? ORDER BY c.created_at DESC""",
-            (user["id"],)
-        )
-        if my_contracts:
-            st.subheader("Mes contrats signés")
-            for c in my_contracts:
-                st.markdown(f"- **{c['ann_title']}** avec *{c['owner_name']}* | {c['start_date']} → {c['end_date']} | Statut : `{c['status']}`")
+                    if user:
+                        already = qdb("SELECT 1 FROM coop_members WHERE coop_id=? AND user_id=?", (co["id"], user["id"]))
+                        if not already:
+                            if st.button(f"Rejoindre", key=f"join_{co['id']}", type="primary"):
+                                qdb("INSERT OR IGNORE INTO coop_members (coop_id,user_id,role) VALUES (?,?,'member')", (co["id"], user["id"]), fetch=False)
+                                st.success("Vous avez rejoint la coopérative !"); st.rerun()
+                        else:
+                            st.success("✅ Vous êtes membre.")
         else:
-            st.info("Aucun contrat pour le moment.")
+            st.info("Aucune coopérative pour le moment.")
 
-def verification_page():
-    st.markdown("### 🪪 " + _("verification"))
+    with tab2:
+        if not user: st.warning(_("login_req")); return
+        with st.form("coop_form", clear_on_submit=True):
+            c_name    = st.text_input("Nom de la coopérative *")
+            c_filiere = st.selectbox("Filière", ["Légumes","Fruits","Céréales","Élevage","Apiculture","Lait","Dattes","Autre"])
+            c_wilaya  = st.selectbox(_("wilaya"), WILAYA_NAMES)
+            c_desc    = st.text_area("Objectif / Description")
+            if st.form_submit_button("🤝 Créer la coopérative", use_container_width=True, type="primary"):
+                if c_name.strip():
+                    cid = qdb("INSERT INTO cooperatives (name,wilaya,filiere,creator_id,description) VALUES (?,?,?,?,?)",
+                              (c_name, c_wilaya, c_filiere, user["id"], c_desc), fetch=False)
+                    qdb("INSERT OR IGNORE INTO coop_members (coop_id,user_id,role) VALUES (?,?,'admin')", (cid, user["id"]), fetch=False)
+                    st.success("Coopérative créée ! Invitez des membres. ✅"); st.rerun()
+
+    with tab3:
+        if not user: st.warning(_("login_req")); return
+        my_coops = qdb("""
+            SELECT c.*, cm.role FROM cooperatives c
+            JOIN coop_members cm ON c.id=cm.coop_id
+            WHERE cm.user_id=?
+        """, (user["id"],))
+        if my_coops:
+            for co in my_coops:
+                st.markdown(f"**🤝 {co['name']}** — {co['filiere']} — Rôle : `{co['role']}`")
+        else:
+            st.info("Vous n'êtes membre d'aucune coopérative.")
+
+# ── DASHBOARD page ─────────────────────────────────────────────────────────────
+def dashboard_page():
+    st.markdown("### 📊 Tableau de bord personnel")
     user = st.session_state.user
-    if not user:
-        st.warning(_("login_required"))
-        return
+    if not user: st.warning(_("login_req")); return
 
-    status = "✅ Vérifié" if user["is_verified"] else "⏳ En attente de vérification"
-    st.info(f"Statut actuel : **{status}**")
+    uid = user["id"]
+    nb_ann  = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (uid,))[0]["n"]
+    nb_msg  = qdb("SELECT COUNT(*) as n FROM messages WHERE sender_id=?", (uid,))[0]["n"]
+    nb_msg_r = qdb("SELECT COUNT(*) as n FROM messages WHERE receiver_id=?", (uid,))[0]["n"]
+    nb_ct   = qdb("SELECT COUNT(*) as n FROM contracts WHERE renter_id=? OR owner_id=?", (uid, uid))[0]["n"]
+    rep     = compute_reputation(uid)
 
-    if not user["is_verified"]:
-        st.markdown("Soumettez une pièce d'identité ou registre de commerce pour être vérifié.")
-        doc = st.file_uploader("📎 Document (JPG, PNG, PDF)", type=["jpg","jpeg","png","pdf"], key="verif_doc")
-        if doc and st.button("📤 Envoyer le document", type="primary", key="send_doc"):
-            if doc.type == "application/pdf":
-                b64 = base64.b64encode(doc.read()).decode()
-            else:
-                b64 = image_to_base64(doc)
-            if b64:
-                query_db("UPDATE users SET documents=? WHERE id=?", (b64, user["id"]), fetch=False)
-                st.success(_("doc_sent"))
-            else:
-                st.error("Impossible de lire le fichier.")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    for col, num, lbl in [
+        (c1, nb_ann, "Annonces"), (c2, nb_msg, "Msg envoyés"),
+        (c3, nb_msg_r, "Msg reçus"), (c4, nb_ct, "Contrats"),
+        (c5, f"{rep:.1f}/5", "Réputation"),
+    ]:
+        col.markdown(f'<div class="stat"><div class="num">{num}</div><div class="lbl">{lbl}</div></div>', unsafe_allow_html=True)
 
-def profile_page():
-    st.markdown("### 👤 " + _("profile"))
-    user = st.session_state.user
-    if not user:
-        st.warning(_("login_required"))
-        return
+    st.markdown("---")
 
-    col_info, col_stats = st.columns([2, 1])
-    with col_info:
+    # Réputation détaillée
+    col_rep, col_ann = st.columns(2)
+    with col_rep:
+        st.subheader("⭐ Score de réputation")
+        pct = int((rep / 5) * 100)
         st.markdown(f"""
-        <div class="card">
-            <div class="card-body">
-                <div class="card-title" style="font-size:1.3rem;">👤 {user['name']}</div>
-                <p>📱 <strong>Téléphone :</strong> {user['phone']}</p>
-                <p>🏷️ <strong>Profil :</strong> {user['profile_type']}</p>
-                <p>📍 <strong>Localisation :</strong> {user['wilaya']} — {user.get('commune','')}</p>
-                <p>🪪 <strong>Statut :</strong> {'✅ Vérifié' if user['is_verified'] else '❌ Non vérifié'}</p>
-                <p>📅 <strong>Inscrit depuis :</strong> {user.get('created_at','')[:10]}</p>
+        <div style="display:flex;align-items:center;gap:16px;margin:10px 0;">
+            <div class="rep-ring" style="--pct:{pct}"><span class="rep-val">{rep:.1f}</span></div>
+            <div>
+                <div style="font-weight:600;font-size:1.1rem;">{rep:.1f} / 5 étoiles</div>
+                <div class="score-bar" style="width:180px;margin:6px 0;"><div class="score-fill" style="width:{pct}%;"></div></div>
+                <div style="font-size:.78rem;color:var(--muted);">
+                {"✅ Profil vérifié" if user["is_verified"] else "❌ Non vérifié — Vérifiez votre compte"}
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-    with col_stats:
-        nb_ann = query_db("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (user["id"],))[0]["n"]
-        nb_msg = query_db("SELECT COUNT(*) as n FROM messages WHERE sender_id=?", (user["id"],))[0]["n"]
-        nb_rev = query_db("SELECT COUNT(*) as n FROM reviews r JOIN announcements a ON r.announcement_id=a.id WHERE a.user_id=?", (user["id"],))[0]["n"]
-        st.markdown(f'<div class="stat-card"><div class="number">{nb_ann}</div><div class="label">Annonces</div></div><br>', unsafe_allow_html=True)
-        st.markdown(f'<div class="stat-card"><div class="number">{nb_msg}</div><div class="label">Messages envoyés</div></div><br>', unsafe_allow_html=True)
-        st.markdown(f'<div class="stat-card"><div class="number">{nb_rev}</div><div class="label">Avis reçus</div></div>', unsafe_allow_html=True)
+        badges = []
+        if user["is_verified"]:       badges.append(("✅", "Membre vérifié", "b-verified"))
+        if rep >= 4.5:                 badges.append(("🏆", "Top vendeur", "b-amber"))
+        if nb_ann >= 5:               badges.append(("📦", "Vendeur actif", "b-green"))
+        if nb_ct >= 3:                badges.append(("📄", "Contractant fiable", "b-blue"))
+
+        if badges:
+            st.markdown("**Badges :**")
+            for icon_b, label_b, cls_b in badges:
+                st.markdown(f'<span class="badge {cls_b}">{icon_b} {label_b}</span> ', unsafe_allow_html=True)
+
+    with col_ann:
+        st.subheader("📌 Mes annonces récentes")
+        my_anns = qdb("SELECT * FROM announcements WHERE user_id=? ORDER BY created_at DESC LIMIT 5", (uid,))
+        if my_anns:
+            for a in my_anns:
+                urgent_tag = " 🚨" if a["is_urgent"] else ""
+                trace_tag  = " 🔍" if a["is_traceable"] else ""
+                cols_a = st.columns([4, 1])
+                cols_a[0].markdown(f"**{a['title']}**{urgent_tag}{trace_tag}<br><small style='color:var(--muted);'>{a['price']} {a['unit']} · {a['wilaya']}</small>", unsafe_allow_html=True)
+                with cols_a[1]:
+                    if st.button("🗑️", key=f"del_{a['id']}", help="Supprimer"):
+                        qdb("DELETE FROM announcements WHERE id=? AND user_id=?", (a["id"], uid), fetch=False); st.rerun()
+        else:
+            st.info("Aucune annonce.")
 
     st.markdown("---")
-    st.subheader("Mes annonces")
-    my_anns = query_db("SELECT * FROM announcements WHERE user_id=? ORDER BY created_at DESC", (user["id"],))
-    if my_anns:
-        for a in my_anns:
-            col_t, col_del = st.columns([5, 1])
-            col_t.markdown(f"**{a['title']}** — {a['price']} {a['unit']} | *{a['wilaya']}*")
-            with col_del:
-                if st.button("🗑️", key=f"del_{a['id']}", help="Supprimer"):
-                    query_db("DELETE FROM announcements WHERE id=? AND user_id=?", (a["id"], user["id"]), fetch=False)
+
+    # Activité récente (timeline)
+    st.subheader("🕐 Activité récente")
+    recent_msgs = qdb("SELECT m.content, m.created_at, u.name FROM messages m JOIN users u ON m.receiver_id=u.id WHERE m.sender_id=? ORDER BY m.created_at DESC LIMIT 5", (uid,))
+    recent_revs = qdb("SELECT r.comment, r.rating, r.created_at FROM reviews r JOIN announcements a ON r.announcement_id=a.id WHERE a.user_id=? ORDER BY r.created_at DESC LIMIT 3", (uid,))
+
+    events = []
+    for m in recent_msgs:
+        events.append({"date": m["created_at"][:16], "text": f"💬 Message envoyé à {m['name']}: «{m['content'][:40]}…»"})
+    for r in recent_revs:
+        events.append({"date": r["created_at"][:16], "text": f"⭐ {'⭐'*r['rating']} Avis reçu: «{r['comment'][:40]}…»"})
+
+    events.sort(key=lambda x: x["date"], reverse=True)
+    if events:
+        for ev in events[:8]:
+            st.markdown(f"""
+            <div class="timeline-item">
+                <div class="timeline-dot"></div>
+                <div><div class="timeline-date">{ev['date']}</div><div class="timeline-text">{ev['text']}</div></div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Aucune activité récente.")
+
+# ── ANEM page ──────────────────────────────────────────────────────────────────
+def anem_page():
+    st.markdown("### 🏛️ " + _("anem"))
+    user = st.session_state.user
+    if not user or user.get("profile_type") != "ANEM":
+        st.error("⛔ Accès réservé aux agents ANEM."); return
+
+    c1, c2, c3, c4 = st.columns(4)
+    for col, sql, lbl in [
+        (c1, "SELECT COUNT(*) as n FROM announcements WHERE type='job'", "Offres d'emploi"),
+        (c2, "SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur'", "Demandeurs"),
+        (c3, "SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur' AND is_verified=1", "Validés"),
+        (c4, "SELECT COUNT(*) as n FROM messages", "Messages total"),
+    ]:
+        n = qdb(sql)[0]["n"]
+        col.markdown(f'<div class="stat"><div class="num">{n}</div><div class="lbl">{lbl}</div></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.subheader("✅ Validation profils travailleurs")
+    pending = qdb("SELECT * FROM users WHERE profile_type='Travailleur' AND is_verified=0")
+    if pending:
+        for t in pending:
+            with st.expander(f"{t['name']} — {t['phone']} — {t['wilaya']}"):
+                if t["documents"]:
+                    st.image(f"data:image/jpeg;base64,{t['documents']}", width=250)
+                c1, c2 = st.columns(2)
+                if c1.button("✅ Valider", key=f"v_{t['id']}", type="primary"):
+                    qdb("UPDATE users SET is_verified=1 WHERE id=?", (t["id"],), fetch=False); st.rerun()
+                if c2.button("❌ Rejeter", key=f"r_{t['id']}"):
+                    qdb("DELETE FROM users WHERE id=? AND is_verified=0", (t["id"],), fetch=False); st.rerun()
+    else:
+        st.success("Aucun profil en attente. ✅")
+
+    st.markdown("---")
+    st.subheader("📋 Offres d'emploi")
+    jobs = qdb("SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE a.type='job' ORDER BY a.created_at DESC")
+    for j in jobs:
+        cnt = qdb("SELECT COUNT(*) as n FROM messages WHERE announcement_id=?", (j["id"],))[0]["n"]
+        with st.expander(f"📌 {j['title']} — {j['wilaya']} (📩 {cnt})"):
+            st.write(j["description"])
+            posts = qdb("SELECT DISTINCT u.name, u.phone, u.wilaya FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.announcement_id=?", (j["id"],))
+            if posts:
+                st.markdown("**Candidats :**")
+                for p in posts:
+                    st.write(f"• {p['name']} ({p['phone']}) — {p['wilaya']}")
+
+# ── Messages page ──────────────────────────────────────────────────────────────
+def messages_page():
+    st.markdown("### 💬 " + _("messages"))
+    user = st.session_state.user
+    if not user: st.warning(_("login_req")); return
+
+    if st.session_state.msg_to:
+        other = qdb("SELECT name, profile_type FROM users WHERE id=?", (st.session_state.msg_to,))
+        if not other: st.session_state.msg_to = None; st.rerun()
+
+        if st.button("← Retour aux conversations"):
+            st.session_state.msg_to = None; st.rerun()
+
+        oth = other[0]
+        st.subheader(f"Conversation avec {oth['name']} ({oth['profile_type']})")
+
+        msgs = qdb("""SELECT * FROM messages
+            WHERE (sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?)
+            ORDER BY created_at""",
+            (user["id"], st.session_state.msg_to, st.session_state.msg_to, user["id"]))
+
+        st.markdown('<div style="max-height:380px;overflow-y:auto;padding:8px;background:#f9fafb;border-radius:10px;margin-bottom:10px;">', unsafe_allow_html=True)
+        for m in msgs:
+            css = "user-bubble" if m["sender_id"] == user["id"] else "ai-bubble"
+            st.markdown(f'<div class="{css}">{m["content"]}<div style="font-size:.65rem;color:var(--muted);margin-top:3px;">{m["created_at"][:16]}</div></div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        with st.form("send_msg", clear_on_submit=True):
+            txt = st.text_area("Votre message…", height=80)
+            if st.form_submit_button("Envoyer 📤", use_container_width=True, type="primary"):
+                if txt.strip():
+                    qdb("INSERT INTO messages (sender_id,receiver_id,announcement_id,content) VALUES (?,?,?,?)",
+                        (user["id"], st.session_state.msg_to, st.session_state.msg_announce, txt.strip()), fetch=False)
                     st.rerun()
     else:
-        st.info("Aucune annonce publiée.")
+        contacts = qdb("""SELECT DISTINCT u.id, u.name, u.profile_type, u.reputation_score,
+            MAX(m.created_at) as last_msg
+            FROM users u JOIN messages m ON u.id IN (m.sender_id,m.receiver_id)
+            WHERE (m.sender_id=? OR m.receiver_id=?) AND u.id!=?
+            GROUP BY u.id ORDER BY last_msg DESC""",
+            (user["id"],)*3)
 
-    st.markdown("---")
-    if not user["is_verified"]:
-        if st.button("🪪 Demander la vérification", type="primary", key="request_verif"):
-            st.session_state.page = "verification"
-            st.rerun()
+        if contacts:
+            for c in contacts:
+                co1, co2 = st.columns([5, 1])
+                stars = "⭐" * round(c["reputation_score"] or 0)
+                co1.markdown(f"**{c['name']}** — {c['profile_type']} {stars}<br><small style='color:var(--muted);'>Dernier message : {c['last_msg'][:10] if c['last_msg'] else '—'}</small>", unsafe_allow_html=True)
+                with co2:
+                    if st.button("Ouvrir", key=f"open_{c['id']}", use_container_width=True):
+                        st.session_state.msg_to = c["id"]; st.rerun()
+                st.markdown('<div style="border-bottom:1px solid var(--border);margin:6px 0;"></div>', unsafe_allow_html=True)
+        else:
+            st.info("Aucune conversation. Contactez un vendeur depuis une annonce.")
 
-# =============================================================================
-#  NOUVELLES FONCTIONNALITÉS (avec clés uniques)
-# =============================================================================
-
-def get_current_season():
-    month = datetime.now().month
-    if month in [12,1,2]: return "Hiver"
-    if month in [3,4,5]: return "Printemps"
-    if month in [6,7,8]: return "Été"
-    return "Automne"
-
-def call_ai_assistant(prompt, lang, wilaya, saison, has_image):
-    # Simulation (remplacer par API OpenAI/Claude)
-    return f"🌾 **Réponse personnalisée**\n\nEn {wilaya} en {saison}, il est conseillé de {'irriguer modérément' if saison=='Été' else 'surveiller les gelées'}.\n\nVotre question : \"{prompt}\"\n\nRéponse détaillée : (intégration API OpenAI/Claude disponible en configurant la clé API dans les secrets Streamlit). Pour l'instant, voici une fiche technique : https://example.com/guide_{wilaya}_{saison}"
-
-def diagnose_plant_disease(image_file, lang, wilaya, saison):
-    # Simulation
-    return f"🔬 **Diagnostic simulé**\n\nD'après l'image, la culture semble souffrir de **mildiou** (taches brunes sur feuilles). Traitement recommandé : bouillie bordelaise (20g/L), appliquer tôt le matin. Prévention : rotation des cultures. Contexte {wilaya} - saison {saison}."
-
-def ai_assistant_page():
-    st.markdown("### 🤖 Assistant Agricole IA")
+# ── Reviews page ───────────────────────────────────────────────────────────────
+def reviews_page():
+    st.markdown("### ⭐ Évaluations")
     user = st.session_state.user
-    if not user:
-        st.warning(_("login_required"))
-        return
+    if not user: st.warning(_("login_req")); return
 
-    lang_assistant = st.selectbox("Langue de réponse", ["français", "arabe dialectal algérien", "tamazight", "anglais"], key="ai_lang")
-    wilaya_user = user.get("wilaya", "")
-    saison = get_current_season()
+    if st.session_state.review_announce:
+        ann = qdb("SELECT * FROM announcements WHERE id=?", (st.session_state.review_announce,))
+        if not ann: st.session_state.review_announce = None; st.rerun()
 
-    for msg in st.session_state.ai_messages:
-        st.chat_message(msg["role"]).write(msg["content"])
+        already = qdb("SELECT id FROM reviews WHERE announcement_id=? AND reviewer_id=?", (st.session_state.review_announce, user["id"]))
+        if already:
+            st.warning("Vous avez déjà évalué cette annonce.")
+            st.session_state.review_announce = None; return
 
-    uploaded_file = st.file_uploader("📷 Prendre une photo de votre culture (optionnel)", type=["jpg","jpeg","png"], key="ai_photo")
-    if uploaded_file:
-        st.image(uploaded_file, caption="Culture à diagnostiquer", width=300)
-        if st.button("🔍 Diagnostiquer cette photo", key="diagnose_btn"):
-            with st.spinner("Analyse en cours..."):
-                diagnosis = diagnose_plant_disease(uploaded_file, lang_assistant, wilaya_user, saison)
-                st.session_state.ai_messages.append({"role": "assistant", "content": diagnosis})
-                st.rerun()
+        st.subheader(f"Évaluer : {ann[0]['title']}")
+        if st.button("← Retour"): st.session_state.review_announce = None; st.rerun()
 
-    prompt = st.chat_input("Posez votre question agricole...")
-    if prompt:
-        st.session_state.ai_messages.append({"role": "user", "content": prompt})
-        with st.spinner("Consultation de l'IA..."):
-            response = call_ai_assistant(prompt, lang_assistant, wilaya_user, saison, uploaded_file is not None)
-        st.session_state.ai_messages.append({"role": "assistant", "content": response})
-        st.rerun()
-
-def price_prediction_page():
-    st.markdown("### 📈 Prédiction des prix des marchés")
-    products = ["Pomme de terre", "Tomate", "Oignon", "Carotte", "Blé dur", "Orge"]
-    product = st.selectbox("Produit", products, key="price_product")
-    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()), key="price_wilaya")
-    
-    dates = pd.date_range(end=date.today(), periods=90, freq='D')
-    prices = np.random.normal(50, 10, len(dates)).cumsum() + 20
-    df_hist = pd.DataFrame({"date": dates, "prix_DA_kg": prices})
-    
-    st.subheader("Historique et prévision (Prophet simulé)")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_hist["date"], y=df_hist["prix_DA_kg"], mode='lines', name='Historique'))
-    future_dates = [date.today() + timedelta(days=i) for i in range(1,15)]
-    future_prices = [prices.iloc[-1] + np.random.normal(0,2) for _ in future_dates]
-    fig.add_trace(go.Scatter(x=future_dates, y=future_prices, mode='lines+markers', name='Prévision', line=dict(dash='dot')))
-    fig.update_layout(title=f"Prix du {product} à {wilaya}", xaxis_title="Date", yaxis_title="DA/kg")
-    st.plotly_chart(fig, use_container_width=True)
-    
-    if st.button("🔔 M'alerter si prix baisse de 10% dans 5 jours", key="price_alert"):
-        st.success("Alerte configurée. Vous serez notifié par SMS.")
-    
-    st.info("Le scraping automatique des prix ONAB et l'utilisation du modèle LSTM/Prophet nécessitent un backend dédié. Contactez support@agriconnect.dz pour activer.")
-
-def satellite_analysis_page():
-    st.markdown("### 🛰️ Analyse par satellite (NDVI / stress hydrique)")
-    lat = st.number_input("Latitude", value=36.0, step=0.01, key="sat_lat")
-    lon = st.number_input("Longitude", value=3.0, step=0.01, key="sat_lon")
-    if st.button("Analyser cette parcelle", key="sat_analyze"):
-        with st.spinner("Récupération des indices Sentinel Hub..."):
-            ndvi = random.uniform(0.2, 0.8)
-            ndwi = random.uniform(-0.2, 0.5)
-            st.metric("NDVI (vigueur végétale)", f"{ndvi:.2f}")
-            st.metric("NDWI (teneur en eau)", f"{ndwi:.2f}")
-            if ndvi < 0.3:
-                st.error("🚨 Alerte stress hydrique détecté ! Irrigation conseillée.")
+        with st.form("rev_form"):
+            rating  = st.slider("Note", 1, 5, 4)
+            comment = st.text_area("Commentaire")
+            if st.form_submit_button("Soumettre ✅", use_container_width=True, type="primary"):
+                qdb("INSERT OR IGNORE INTO reviews (announcement_id,reviewer_id,rating,comment) VALUES (?,?,?,?)",
+                    (st.session_state.review_announce, user["id"], rating, comment), fetch=False)
+                # Update reputation
+                new_rep = compute_reputation(ann[0]["user_id"])
+                qdb("UPDATE users SET reputation_score=? WHERE id=?", (new_rep, ann[0]["user_id"]), fetch=False)
+                st.success("Merci pour votre évaluation !"); st.session_state.review_announce = None; st.rerun()
+    else:
+        my = qdb("SELECT id FROM announcements WHERE user_id=?", (user["id"],))
+        if my:
+            ids = [str(a["id"]) for a in my]
+            revs = qdb(f"SELECT r.*,u.name FROM reviews r JOIN users u ON r.reviewer_id=u.id WHERE r.announcement_id IN ({','.join(ids)}) ORDER BY r.created_at DESC")
+            if revs:
+                avg = sum(r["rating"] for r in revs) / len(revs)
+                st.markdown(f"**Moyenne : {'⭐'*round(avg)} ({avg:.1f}/5 sur {len(revs)} avis)**")
+                for r in revs:
+                    st.markdown(f"{'⭐'*r['rating']} **{r['name']}** — *{r['comment']}* <small style='color:var(--muted);'>({r['created_at'][:10]})</small>", unsafe_allow_html=True)
             else:
-                st.success("Parcelle en bonne santé.")
-            m = folium.Map(location=[lat, lon], zoom_start=13)
-            folium.TileLayer('Stamen Terrain').add_to(m)
-            folium.CircleMarker([lat, lon], radius=10, color='green', fill=True).add_to(m)
-            st_folium(m, width=700, height=400, key="sat_map")
-    st.info("L'intégration complète avec Sentinel Hub (gratuit jusqu'à 10k requêtes/mois) nécessite une inscription sur https://scihub.copernicus.eu/.")
+                st.info("Aucun avis reçu pour vos annonces.")
+        else:
+            st.info("Publiez des annonces pour recevoir des avis.")
 
-def insurance_page():
-    st.markdown("### 🛡️ Micro-assurance récolte (partenariat SAA)")
-    culture = st.selectbox("Type de culture", ["Blé", "Orge", "Pomme de terre", "Tomate", "Olive"], key="ins_culture")
-    superficie = st.number_input("Superficie (hectares)", min_value=0.1, step=0.1, key="ins_area")
-    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()), key="ins_wilaya")
-    prime = superficie * 150
-    st.info(f"Prime mensuelle estimée : **{prime:.0f} DA**")
-    if st.button("Souscrire maintenant", key="ins_subscribe"):
-        query_db("INSERT INTO insurance_subscriptions (user_id, culture, area_ha, wilaya, premium_monthly) VALUES (?,?,?,?,?)",
-                 (st.session_state.user["id"], culture, superficie, wilaya, prime), fetch=False)
-        st.success("Demande envoyée à la SAA. Vous serez contacté sous 48h.")
-    st.markdown("---")
-    st.subheader("Indemnisation automatique")
-    st.write("Déclenchée si : gel (T°<0°C) ou sécheresse (0mm pluie pendant 30j).")
-    if st.button("Simuler un sinistre", key="ins_simulate"):
-        st.warning("Simulation : gel détecté le 15 janvier. Indemnisation de 12 000 DA versée sur votre compte CCP sous 48h.")
-
-def community_credit_page():
-    st.markdown("### 🤝 Crédit agricole communautaire")
-    st.write("Formez un groupe de 5 à 20 agriculteurs, cotisez mensuellement, et participez au tirage.")
-    if st.button("➕ Créer un groupe", key="credit_create_group"):
-        group_name = st.text_input("Nom du groupe", key="credit_name")
-        monthly = st.number_input("Cotisation mensuelle (DA)", min_value=500, step=500, value=2000, key="credit_fee")
-        if group_name and st.button("Valider la création", key="credit_validate"):
-            gid = query_db("INSERT INTO credit_groups (name, created_by, monthly_fee) VALUES (?,?,?)",
-                           (group_name, st.session_state.user["id"], monthly), fetch=False)
-            query_db("INSERT INTO credit_group_members (group_id, user_id) VALUES (?,?)", (gid, st.session_state.user["id"]), fetch=False)
-            st.success(f"Groupe '{group_name}' créé ! Code d'invitation : AGR{random.randint(1000,9999)}")
-    st.markdown("---")
-    st.subheader("Mes groupes actifs")
-    groups = query_db("SELECT g.* FROM credit_groups g JOIN credit_group_members m ON g.id=m.group_id WHERE m.user_id=?", (st.session_state.user["id"],))
-    for g in groups:
-        st.write(f"**{g['name']}** - Cotisation {g['monthly_fee']} DA/mois")
-        if st.button("Participer au tirage", key=f"tirage_{g['id']}"):
-            st.balloons()
-            st.success("Félicitations ! Vous avez été tiré au sort. Le montant sera versé.")
-
-def parcels_page():
-    st.markdown("### 📍 Mes parcelles (GPS & journal cultural)")
-    st.subheader("Enregistrer une nouvelle parcelle")
-    points_text = st.text_area("Entrez les coordonnées (lat,lon) séparées par des virgules :\n36.123,3.456\n36.124,3.457\n...", key="parcel_points")
-    if st.button("Calculer superficie", key="parcel_calc"):
-        try:
-            area = random.uniform(0.5, 20)
-            st.info(f"Superficie calculée : {area:.2f} ha")
-            query_db("INSERT INTO parcels (user_id, name, polygon_coords, area_ha) VALUES (?,?,?,?)",
-                     (st.session_state.user["id"], "Ma parcelle", points_text, area), fetch=False)
-            st.success("Parcelle enregistrée.")
-        except:
-            st.error("Erreur dans le format des coordonnées.")
-    st.subheader("Journal cultural")
-    parcels_list = query_db("SELECT id, name FROM parcels WHERE user_id=?", (st.session_state.user["id"],))
-    if parcels_list:
-        with st.form("journal_form"):
-            parcel_id = st.selectbox("Parcelle", [(p["id"], p["name"]) for p in parcels_list], format_func=lambda x: x[1], key="journal_parcel")[0]
-            date_semis = st.date_input("Date de semis", key="journal_date")
-            culture = st.text_input("Culture", key="journal_culture")
-            rendement = st.number_input("Rendement (qx/ha)", min_value=0.0, key="journal_yield")
-            intrants = st.text_area("Intrants utilisés", key="journal_inputs")
-            if st.form_submit_button("Enregistrer"):
-                query_db("INSERT INTO crop_journal (parcel_id, culture, sowing_date, yield_qx_ha, inputs) VALUES (?,?,?,?,?)",
-                         (parcel_id, culture, date_semis.isoformat(), rendement, intrants), fetch=False)
-                st.success("Journal mis à jour")
-    st.download_button("📄 Exporter toutes mes parcelles en PDF (subvention FNRDA)", data=b"Exemple PDF", file_name="parcelles.pdf", key="export_parcels")
-
-def cooperatives_page():
-    st.markdown("### 🏢 Coopératives numériques")
-    action = st.radio("Action", ["Créer une coopérative", "Rejoindre une coopérative", "Mes coopératives"], key="coop_action")
-    if action == "Créer une coopérative":
-        name = st.text_input("Nom", key="coop_name")
-        filiere = st.selectbox("Filière", ["Céréales", "Maraîchage", "Élevage", "Apiculture"], key="coop_filiere")
-        wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()), key="coop_wilaya")
-        if st.button("Créer", key="coop_create"):
-            query_db("INSERT INTO cooperatives (name, filiere, wilaya, created_by) VALUES (?,?,?,?)",
-                     (name, filiere, wilaya, st.session_state.user["id"]), fetch=False)
-            st.success(f"Coopérative {name} créée ! Invitez des membres par SMS.")
-    elif action == "Mes coopératives":
-        my_coops = query_db("SELECT c.* FROM cooperatives c JOIN coop_members m ON c.id=m.cooperative_id WHERE m.user_id=?", (st.session_state.user["id"],))
-        for coop in my_coops:
-            st.write(f"**{coop['name']}** - {coop['filiere']} - {coop['wilaya']}")
-            if st.button("Passer une commande groupée", key=f"cmd_{coop['id']}"):
-                st.info("Fonction d'agrégation de commandes (ex: 10 sacs engrais, prix négocié).")
-            if st.button("Voter pour le fournisseur", key=f"vote_{coop['id']}"):
-                st.radio("Choix du fournisseur", ["Engrais A", "Engrais B", "Engrais C"], key=f"vote_radio_{coop['id']}")
-                st.success("Vote enregistré.")
-            if st.button("📄 Générer contrat collectif", key=f"contrat_{coop['id']}"):
-                st.download_button("Télécharger contrat PDF", b"...", "contrat_coop.pdf", key=f"dl_contrat_{coop['id']}")
-    st.markdown("---")
-    st.subheader("Tableau de bord Coopératives")
-    st.dataframe(pd.DataFrame({"Membre": ["Ali", "Mohamed"], "Contribution (DA)": [5000, 7200], "Part bénéfices": [0.4, 0.6]}))
-
-def reputation_page():
-    st.markdown("### ⭐ Système de réputation vérifiée")
+# ── Contract page ──────────────────────────────────────────────────────────────
+def contract_page():
+    st.markdown("### 📄 Contrats")
     user = st.session_state.user
-    if not user: return
-    rep = query_db("SELECT * FROM reputation WHERE user_id=?", (user["id"],))
-    if not rep:
-        score = random.uniform(3,5)
-        query_db("INSERT INTO reputation (user_id, score) VALUES (?,?)", (user["id"], score), fetch=False)
-    else:
-        score = rep[0]["score"]
-    st.metric("Votre score de confiance", f"{score:.1f} / 5")
-    st.write("**Badges obtenus** : ✅ Vendeur fiable, 🚛 Transport vérifié")
-    if st.button("Vérifier mon NIF (Numéro d'Identification Fiscale)", key="verify_nif"):
-        st.success("NIF validé via API DGI. +0.2 point de réputation.")
-        query_db("UPDATE reputation SET score = score + 0.2, nif_verified=1 WHERE user_id=?", (user["id"],), fetch=False)
-    st.subheader("Top vendeurs de votre wilaya")
-    st.dataframe(pd.DataFrame({"Nom": ["Ferme Zitouna", "SARL El Baraka"], "Score": [4.8, 4.6]}))
+    if not user: st.warning(_("login_req")); return
 
-def forum_page():
-    st.markdown("### 💬 Forum communautaire agricole")
-    with st.expander("➕ Nouvelle discussion"):
-        title = st.text_input("Titre", key="forum_title")
-        content = st.text_area("Message", key="forum_content")
-        tags = st.multiselect("Tags", ["Maladie", "Irrigation", "Prix", "Météo", "Conseil"], key="forum_tags")
-        if st.button("Publier", key="forum_publish"):
-            query_db("INSERT INTO forum_posts (user_id, title, content, tags) VALUES (?,?,?,?)",
-                     (st.session_state.user["id"], title, content, ",".join(tags)), fetch=False)
-            st.success("Post ajouté")
-    posts = query_db("SELECT p.*, u.name FROM forum_posts p JOIN users u ON p.user_id=u.id ORDER BY p.created_at DESC")
-    for p in posts:
-        with st.container():
-            st.markdown(f"**{p['title']}** par {p['name']} 👍 {p['upvotes']}  `{p['tags']}`")
-            st.write(p['content'])
-            if st.button("Répondre", key=f"reply_btn_{p['id']}"):
-                reply = st.text_area("Votre réponse", key=f"reply_text_{p['id']}")
-                if st.button("Envoyer réponse", key=f"send_reply_{p['id']}"):
-                    query_db("INSERT INTO forum_replies (post_id, user_id, content) VALUES (?,?,?)",
-                             (p['id'], st.session_state.user["id"], reply), fetch=False)
-                    st.success("Réponse ajoutée.")
-            replies = query_db("SELECT r.*, u.name FROM forum_replies r JOIN users u ON r.user_id=u.id WHERE r.post_id=? ORDER BY r.created_at", (p['id'],))
-            for r in replies:
-                st.markdown(f"&nbsp;&nbsp;&nbsp;↳ **{r['name']}** : {r['content']}")
+    if st.session_state.contract_announce:
+        ann = qdb("SELECT * FROM announcements WHERE id=?", (st.session_state.contract_announce,))
+        if not ann: st.session_state.contract_announce = None; st.rerun()
+        a = ann[0]
+        owner = qdb("SELECT * FROM users WHERE id=?", (a["user_id"],))
+        if not owner: st.error("Propriétaire introuvable."); return
+        o = owner[0]
+
+        st.subheader(f"Contrat pour : {a['title']}")
+        if st.button("← Retour"): st.session_state.contract_announce = None; st.rerun()
+
+        c1, c2 = st.columns(2)
+        start = c1.date_input("Date de début", date.today())
+        end   = c2.date_input("Date de fin", date.today() + timedelta(days=7))
+        terms = st.text_area("Conditions particulières", height=100)
+
+        if start > end:
+            st.error("La date de fin doit être après la date de début.")
+        else:
+            if st.button("📥 Générer le contrat PDF", type="primary", use_container_width=True):
+                lines = [
+                    "=" * 52,
+                    "         CONTRAT AGRICONNECT",
+                    "=" * 52,
+                    f"Annonce      : {a['title']}",
+                    f"Propriétaire : {o['name']} ({o['phone']})",
+                    f"Locataire    : {user['name']} ({user['phone']})",
+                    f"Période      : {start.isoformat()} → {end.isoformat()}",
+                    f"Wilaya       : {a['wilaya']}",
+                    f"Prix         : {a['price']:,.0f} {a['unit']}",
+                    "",
+                    "Conditions particulières :",
+                    terms or "(aucune)",
+                    "",
+                    "=" * 52,
+                    f"Généré le : {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+                    "AgriConnect © 2026 — contact@agriconnect.dz",
+                ]
+                content = "\n".join(lines).encode("utf-8")
+                st.download_button("📥 Télécharger le contrat", data=content,
+                                   file_name=f"contrat_agriconnect_{a['id']}.txt", mime="text/plain", use_container_width=True)
+                qdb("INSERT INTO contracts (announcement_id,renter_id,owner_id,start_date,end_date,terms,status) VALUES (?,?,?,?,?,?,?)",
+                    (a["id"], user["id"], o["id"], start.isoformat(), end.isoformat(), terms, "active"), fetch=False)
+                st.success("Contrat enregistré et disponible au téléchargement. ✅")
+    else:
+        my_contracts = qdb("""SELECT c.*, a.title as ann_title, u.name as owner_name
+            FROM contracts c JOIN announcements a ON c.announcement_id=a.id
+            JOIN users u ON c.owner_id=u.id WHERE c.renter_id=? ORDER BY c.created_at DESC""", (user["id"],))
+        if my_contracts:
+            st.subheader("Mes contrats")
+            for c in my_contracts:
+                status_badge = "b-green" if c["status"] == "active" else "b-gray"
+                st.markdown(f"""<div class="timeline-item"><div class="timeline-dot"></div>
+                <div><div class="timeline-text">📄 <strong>{c['ann_title']}</strong> — avec {c['owner_name']}</div>
+                <div class="timeline-date">{c['start_date']} → {c['end_date']} &nbsp;
+                <span class="badge {status_badge}">{c['status']}</span></div></div></div>""", unsafe_allow_html=True)
+        else:
+            st.info("Aucun contrat signé.")
+
+# ── Profile page ───────────────────────────────────────────────────────────────
+def profile_page():
+    st.markdown("### 👤 " + _("profile"))
+    user = st.session_state.user
+    if not user: st.warning(_("login_req")); return
+
+    uid  = user["id"]
+    rep  = compute_reputation(uid)
+    pct  = int((rep / 5) * 100)
+
+    c_info, c_stats = st.columns([2, 1])
+    with c_info:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-body">
+                <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;">
+                    <div style="width:52px;height:52px;border-radius:50%;background:var(--green-pale);display:flex;align-items:center;justify-content:center;font-size:1.5rem;">👤</div>
+                    <div>
+                        <div style="font-size:1.15rem;font-weight:600;">{user['name']}</div>
+                        <div><span class="badge {'b-verified' if user['is_verified'] else 'b-amber'}">{'✅ Vérifié' if user['is_verified'] else '⏳ Non vérifié'}</span></div>
+                    </div>
+                </div>
+                <p>📱 <strong>{user['phone']}</strong></p>
+                <p>🏷️ {user['profile_type']}</p>
+                <p>📍 {user['wilaya']} — {user.get('commune','')}</p>
+                <p>📅 Membre depuis {user.get('created_at','')[:10]}</p>
+                {f"<p>📝 {user.get('bio','')}</p>" if user.get('bio') else ""}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Vérification
+        if not user["is_verified"]:
             st.markdown("---")
+            st.subheader("🪪 Demander la vérification")
+            doc = st.file_uploader("Pièce d'identité / Registre de commerce", type=["jpg","jpeg","png","pdf"])
+            if doc and st.button("📤 Soumettre", type="primary"):
+                if doc.type == "application/pdf":
+                    b64 = base64.b64encode(doc.read()).decode()
+                else:
+                    b64 = img_to_b64(doc)
+                if b64:
+                    qdb("UPDATE users SET documents=? WHERE id=?", (b64, uid), fetch=False)
+                    st.success("Document soumis. Un agent ANEM validera votre profil sous 48h.")
 
-def weather_page():
-    st.markdown("### 🌦️ Météo hyper-locale (API Open-Meteo)")
-    lat = st.number_input("Latitude", value=36.7763, key="weather_lat")
-    lon = st.number_input("Longitude", value=3.0588, key="weather_lon")
-    if st.button("Météo pour ma parcelle", key="weather_get"):
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=Africa/Algiers"
-        try:
-            response = requests.get(url).json()
-            daily = response["daily"]
-            df = pd.DataFrame({
-                "Date": daily["time"], 
-                "T° max": daily["temperature_2m_max"], 
-                "T° min": daily["temperature_2m_min"],
-                "Pluie (mm)": daily["precipitation_sum"]
-            })
-            st.dataframe(df)
-            if min(daily["temperature_2m_min"]) < 0:
-                st.error("⚠️ Alerte gel prévu dans les prochains jours !")
-            if max(daily["temperature_2m_max"]) > 40:
-                st.error("⚠️ Alerte sirocco (canicule) à venir.")
-        except:
-            st.warning("Service météo temporairement indisponible.")
-    st.info("Données gratuites à 1 km de résolution. Activez les alertes SMS dans votre profil.")
+    with c_stats:
+        nb_ann = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (uid,))[0]["n"]
+        nb_rev = qdb("SELECT COUNT(*) as n FROM reviews r JOIN announcements a ON r.announcement_id=a.id WHERE a.user_id=?", (uid,))[0]["n"]
+        nb_ct  = qdb("SELECT COUNT(*) as n FROM contracts WHERE renter_id=? OR owner_id=?", (uid, uid))[0]["n"]
+        st.markdown(f'<div class="stat"><div class="num">{nb_ann}</div><div class="lbl">Annonces</div></div><br>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat"><div class="num">{nb_rev}</div><div class="lbl">Avis reçus</div></div><br>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat"><div class="num">{nb_ct}</div><div class="lbl">Contrats</div></div><br>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="stat">
+            <div class="rep-ring" style="--pct:{pct};margin:0 auto;">
+                <span class="rep-val" style="font-size:.85rem;">{rep:.1f}</span>
+            </div>
+            <div class="lbl" style="margin-top:6px;">Réputation</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-def soil_analysis_page():
-    st.markdown("### 🧪 Analyse de sol (photo + IA)")
-    uploaded = st.file_uploader("Prenez une photo de votre sol à l'horizontale", type=["jpg","jpeg","png"], key="soil_photo")
-    if uploaded:
-        st.image(uploaded, width=300)
-        if st.button("Analyser ce sol", key="soil_analyze"):
-            texture = random.choice(["Argilo-limoneux", "Sablo-argileux", "Limoneux"])
-            ph_estime = round(random.uniform(5.5, 7.5),1)
-            st.success(f"Texture estimée : {texture}")
-            st.metric("pH estimé", ph_estime)
-            if ph_estime < 6.0:
-                st.info("Recommandation : apport de chaux (2 t/ha) pour remonter le pH.")
-    st.markdown("---")
-    st.subheader("Carte pédologique de l'Algérie")
-    st.map(pd.DataFrame({"lat": [36.5, 35.5], "lon": [2.5, 4.0]}))
-
-def transport_optimization_page():
-    st.markdown("### 🚚 Optimisation tournées & retour chargé")
-    annonces = query_db("SELECT * FROM announcements WHERE type='transport'")
-    if annonces:
-        st.subheader("Trajets disponibles")
-        for a in annonces:
-            st.write(f"**{a['title']}** - {a['wilaya']} -> {json.loads(a['data']).get('destination', '')}")
-    st.subheader("Suggestions de chargements compatibles")
-    if st.button("Rechercher des retours chargés pour mon trajet", key="optim_search"):
-        st.success("2 chargements compatibles trouvés : 5 t de blé vers Constantine, 3 t d'engrais vers Annaba.")
-        st.write("Taux de remplissage moyen : 78% | CA/km : 12 DA")
-
-def surplus_alert_page():
-    st.markdown("### 🚨 Alertes surplus & urgence")
-    urgent_ann = query_db("SELECT * FROM announcements WHERE data LIKE '%urgence%'")
-    for a in urgent_ann:
-        st.warning(f"⚠️ URGENCE : {a['title']} - {a['wilaya']} - Prix réduit de 30% !")
-    with st.form("urgence_form"):
-        annonce_id = st.number_input("ID de votre annonce", min_value=1, key="urgent_id")
-        reduction = st.selectbox("Remise proposée", ["-10%", "-20%", "-30%"], key="urgent_reduction")
-        if st.form_submit_button("Activer le mode Urgence"):
-            st.success("Notification envoyée à tous les acheteurs dans un rayon de 50 km.")
-    st.info("Vous pouvez également faire don de votre surplus. Contactez la Banque Alimentaire au 0550 12 34 56.")
-
-# ─── Navbar enrichie (avec clés uniques) ────────────────────────────────────
-def render_navbar():
-    base_items = [
-        ("home", _("home")), ("market", _("market")), ("job", _("job")),
-        ("transport", _("transport")), ("grazing", _("grazing")),
-        ("pollination", _("pollination")), ("fertilizer", _("fertilizer")),
-        ("equipment", _("equipment")), ("messages", _("messages")),
-        ("profile", _("profile")),
-    ]
-    new_items = [
-        ("ai_assistant", "🤖 Assistant IA"),
-        ("price_prediction", "📈 Prix"),
-        ("satellite", "🛰️ Satellite"),
-        ("insurance", "🛡️ Assurance"),
-        ("community_credit", "🤝 Crédit"),
-        ("parcels", "📍 Mes parcelles"),
-        ("cooperatives", "🏢 Coopératives"),
-        ("reputation", "⭐ Réputation"),
-        ("forum", "💬 Forum"),
-        ("weather", "🌦️ Météo"),
-        ("soil", "🧪 Sol"),
-        ("transport_opt", "🚚 Optimisation"),
-        ("surplus", "🚨 Urgence"),
-    ]
-    if st.session_state.user:
-        all_items = base_items + new_items
-        cols = st.columns(len(all_items))
-        for i, (page, label) in enumerate(all_items):
-            active = st.session_state.page == page
-            with cols[i]:
-                if st.button(label, key=f"nav_{page}", use_container_width=True,
-                             type="primary" if active else "secondary"):
-                    st.session_state.page = page
-                    st.rerun()
-    else:
-        c1, c2, c3 = st.columns(3)
-        for col, page, label, key in [
-            (c1, "home", _("home"), "nav_home_public"),
-            (c2, "login", _("login"), "nav_login_public"),
-            (c3, "register", _("register"), "nav_register_public")
-        ]:
-            with col:
-                if st.button(label, key=key, use_container_width=True,
-                             type="primary" if st.session_state.page == page else "secondary"):
-                    st.session_state.page = page
-                    st.rerun()
-
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────────────────
 def main():
-    if not st.session_state.db_initialized:
-        init_db()
-        st.session_state.db_initialized = True
+    if not st.session_state.db_init:
+        init_db(); st.session_state.db_init = True
 
     with st.sidebar:
-        st.markdown("### 🌐 Langue")
+        st.markdown("### 🌐 Langue / اللغة")
         lang = st.selectbox("", ["fr","ar","en"],
                             index=["fr","ar","en"].index(st.session_state.lang),
-                            key="sidebar_lang", label_visibility="collapsed")
+                            label_visibility="collapsed")
         if lang != st.session_state.lang:
-            st.session_state.lang = lang
-            st.rerun()
-        st.markdown("---")
-        if st.session_state.user:
-            u = st.session_state.user
-            verified_badge = "✅" if u["is_verified"] else "⏳"
-            st.markdown(f"**👤 {u['name']}** {verified_badge}")
-            st.caption(f"{u['profile_type']} — {u['wilaya']}")
-            if st.button(_("logout"), key="sidebar_logout", use_container_width=True):
-                st.session_state.user = None
-                st.session_state.page = "home"
-                st.rerun()
-        else:
-            if st.button(_("login"), key="sidebar_login", use_container_width=True, type="primary"):
-                st.session_state.page = "login"
-                st.rerun()
-            if st.button(_("register"), key="sidebar_register", use_container_width=True):
-                st.session_state.page = "register"
-                st.rerun()
-        st.markdown("---")
-        st.markdown('<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px;text-align:center;font-size:0.8rem;">📢 <strong>Espace publicitaire</strong><br>contact@agriconnect.dz</div>', unsafe_allow_html=True)
+            st.session_state.lang = lang; st.rerun()
 
+        st.markdown("---")
+        user = st.session_state.user
+        if user:
+            rep = compute_reputation(user["id"])
+            st.markdown(f"**👤 {user['name']}**")
+            st.caption(f"{user['profile_type']} · ⭐{rep:.1f}/5")
+            st.caption(f"{'✅ Vérifié' if user['is_verified'] else '⏳ Non vérifié'}")
+            if st.button(_("logout"), use_container_width=True):
+                st.session_state.user = None; st.session_state.page = "home"; st.rerun()
+            st.markdown("---")
+            if st.button("📊 Tableau de bord", use_container_width=True):
+                st.session_state.page = "dashboard"; st.rerun()
+            if st.button("🔍 Traçabilité QR", use_container_width=True):
+                st.session_state.page = "tracability"; st.rerun()
+        else:
+            if st.button(_("login"), use_container_width=True, type="primary"):
+                st.session_state.page = "login"; st.rerun()
+            if st.button(_("register"), use_container_width=True):
+                st.session_state.page = "register"; st.rerun()
+
+        st.markdown("---")
+        nb_urg = qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1")[0]["n"]
+        if nb_urg > 0:
+            st.markdown(f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:.78rem;color:#991b1b;">🚨 <strong>{nb_urg} vente(s) urgente(s)</strong></div>', unsafe_allow_html=True)
+            if st.button("Voir les urgences", use_container_width=True):
+                st.session_state.page = "alerts"; st.rerun()
+
+        st.markdown("---")
+        st.markdown('<div style="background:var(--amber-pale);border:1px solid #fcd34d;border-radius:8px;padding:10px;text-align:center;font-size:.75rem;">📢 Espace pub<br><strong>contact@agriconnect.dz</strong></div>', unsafe_allow_html=True)
+
+    # Navigation bar
     if st.session_state.user:
-        render_navbar()
+        navbar()
     else:
         c1, c2, c3 = st.columns(3)
-        for col, page, label, key in [
-            (c1, "home", _("home"), "nav_home_public"),
-            (c2, "login", _("login"), "nav_login_public"),
-            (c3, "register", _("register"), "nav_register_public")
-        ]:
+        for col, pg, lbl in [(c1,"home","🏠 Accueil"),(c2,"login","🔐 Connexion"),(c3,"register","📝 Inscription")]:
             with col:
-                if st.button(label, key=key, use_container_width=True,
-                             type="primary" if st.session_state.page == page else "secondary"):
-                    st.session_state.page = page
-                    st.rerun()
+                if st.button(lbl, use_container_width=True, type="primary" if st.session_state.page==pg else "secondary"):
+                    st.session_state.page = pg; st.rerun()
 
-    pages = {
+    # Router
+    PAGES = {
         "home": home_page, "login": login_page, "register": register_page,
         "market": market_page, "job": job_page, "transport": transport_page,
         "grazing": grazing_page, "pollination": pollination_page,
         "fertilizer": fertilizer_page, "equipment": equipment_page,
         "anem": anem_page, "messages": messages_page, "reviews": reviews_page,
-        "contract": contract_page, "verification": verification_page, "profile": profile_page,
-        "ai_assistant": ai_assistant_page,
-        "price_prediction": price_prediction_page,
-        "satellite": satellite_analysis_page,
-        "insurance": insurance_page,
-        "community_credit": community_credit_page,
-        "parcels": parcels_page,
-        "cooperatives": cooperatives_page,
-        "reputation": reputation_page,
-        "forum": forum_page,
-        "weather": weather_page,
-        "soil": soil_analysis_page,
-        "transport_opt": transport_optimization_page,
-        "surplus": surplus_alert_page,
+        "contract": contract_page, "profile": profile_page,
+        "weather": weather_page, "prices": prices_page, "alerts": alerts_page,
+        "assistant": assistant_page, "cooperative": cooperative_page,
+        "dashboard": dashboard_page, "tracability": tracability_page,
     }
-    pages.get(st.session_state.page, home_page)()
+    PAGES.get(st.session_state.page, home_page)()
 
-    st.markdown('<div class="footer">© 2026 AgriConnect — contact@agriconnect.dz | Tous droits réservés | Version 3.0 (IA, prédictions, assurance, coopératives...)</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="footer">
+        🌾 <strong>AgriConnect v3.0</strong> — La plateforme numérique de l'agriculture algérienne<br>
+        © 2026 · contact@agriconnect.dz · 58 wilayas · Fait 🇩🇿 avec ❤️
+    </div>
+    """, unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
     main()
