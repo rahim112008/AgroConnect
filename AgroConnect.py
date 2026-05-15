@@ -1,4 +1,4 @@
-# app.py – AgriConnect DZ (version intégrale)
+# app.py – AgriConnect DZ (version corrigée)
 import streamlit as st
 import sqlite3
 import hashlib
@@ -10,6 +10,7 @@ import math
 import random
 from datetime import datetime, date, timedelta
 from PIL import Image
+import pandas as pd  # CORRECTION : import manquant
 
 # ── Imports optionnels ────────────────────────────────────────────────────────
 try:
@@ -270,8 +271,8 @@ DEFAULTS = {
     "msg_to": None, "msg_announce": None,
     "review_announce": None, "contract_announce": None,
     "search_query": "", "db_initialized": False,
-    "ai_messages": [],  # Pour l'assistant IA
-    "surplus_notifs": [],  # File de notifications urgence
+    "ai_messages": [],
+    "surplus_notifs": [],
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -702,10 +703,10 @@ def home_page():
     if urgents:
         st.markdown(f'<div class="alerte-banner">🚨 {len(urgents)} vente(s) urgente(s) en cours — cliquez pour voir</div>', unsafe_allow_html=True)
 
-    t = qdb("SELECT COUNT(*) as n FROM announcements")[0]["n"]
-    u = qdb("SELECT COUNT(*) as n FROM users")[0]["n"]
-    w = qdb("SELECT COUNT(DISTINCT wilaya) as n FROM announcements")[0]["n"]
-    urgent_cnt = qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1")[0]["n"]
+    t = qdb("SELECT COUNT(*) as n FROM announcements")[0]["n"] if qdb("SELECT COUNT(*) as n FROM announcements") else 0
+    u = qdb("SELECT COUNT(*) as n FROM users")[0]["n"] if qdb("SELECT COUNT(*) as n FROM users") else 0
+    w = qdb("SELECT COUNT(DISTINCT wilaya) as n FROM announcements")[0]["n"] if qdb("SELECT COUNT(DISTINCT wilaya) as n FROM announcements") else 0
+    urgent_cnt = qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1")[0]["n"] if qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1") else 0
     c1,c2,c3,c4 = st.columns(4)
     for col, num, lbl in [(c1,t,"Annonces"),(c2,u,"Agriculteurs"),(c3,w,"Wilayas"),(c4,urgent_cnt,"🚨 Urgences")]:
         col.markdown(f'<div class="stat-card"><div class="num">{num}</div><div class="lbl">{lbl}</div></div>', unsafe_allow_html=True)
@@ -1246,13 +1247,13 @@ def tracabilite_page():
                             {verified}
                         </div>
                         <table>
-                            <tr><td>👤 Producteur</td><td><strong>{a['nom_prod']}</strong></td></tr>
-                            <tr><td>📍 Origine</td><td>{a['wilaya']} — {a['commune']}</td></tr>
-                            <tr><td>🏷️ Catégorie</td><td>{a['type'].upper()}</td></tr>
-                            <tr><td>💰 Prix</td><td>{a['price']:,.0f} {a['unit'] or ''}</td></tr>
-                            <tr><td>📅 Date publication</td><td>{a['created_at'][:10]}</td></tr>
-                            <tr><td>🔢 Numéro de lot</td><td>{lot}</td></tr>
-                            <tr><td>🌐 URL traçabilité</td><td style="color:#2a6496;">{url_trace}</td></tr>
+                            <tr><td>👤 Producteur</td><td><strong>{a['nom_prod']}</strong></td>
+                            <tr><td>📍 Origine</td><td>{a['wilaya']} — {a['commune']}</td>
+                            <tr><td>🏷️ Catégorie</td><td>{a['type'].upper()}</td>
+                            <tr><td>💰 Prix</td><td>{a['price']:,.0f} {a['unit'] or ''}</td>
+                            <tr><td>📅 Date publication</td><td>{a['created_at'][:10]}</td>
+                            <tr><td>🔢 Numéro de lot</td><td>{lot}</td>
+                            <tr><td>🌐 URL traçabilité</td><td style="color:#2a6496;">{url_trace}</td>
                         </table>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1398,10 +1399,10 @@ def anem_page():
     if not user or user.get("profile_type") != "ANEM":
         st.error("⛔ Accès réservé au profil ANEM.")
         return
-    tj = qdb("SELECT COUNT(*) as n FROM announcements WHERE type='job'")[0]["n"]
-    tw = qdb("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur'")[0]["n"]
-    tv = qdb("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur' AND is_verified=1")[0]["n"]
-    tm = qdb("SELECT COUNT(*) as n FROM messages")[0]["n"]
+    tj = qdb("SELECT COUNT(*) as n FROM announcements WHERE type='job'")[0]["n"] if qdb("SELECT COUNT(*) as n FROM announcements WHERE type='job'") else 0
+    tw = qdb("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur'")[0]["n"] if qdb("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur'") else 0
+    tv = qdb("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur' AND is_verified=1")[0]["n"] if qdb("SELECT COUNT(*) as n FROM users WHERE profile_type='Travailleur' AND is_verified=1") else 0
+    tm = qdb("SELECT COUNT(*) as n FROM messages")[0]["n"] if qdb("SELECT COUNT(*) as n FROM messages") else 0
     c1,c2,c3,c4 = st.columns(4)
     for col,n,l in [(c1,tj,"Offres emploi"),(c2,tw,"Demandeurs"),(c3,tv,"Validés"),(c4,tm,"Messages")]:
         col.markdown(f'<div class="stat-card"><div class="num">{n}</div><div class="lbl">{l}</div></div>', unsafe_allow_html=True)
@@ -1426,12 +1427,16 @@ def anem_page():
     st.markdown("---")
     st.subheader("📋 Offres d'emploi")
     offres = qdb("SELECT a.*, u.name as auth FROM announcements a JOIN users u ON a.user_id=u.id WHERE a.type='job' ORDER BY a.created_at DESC")
-    for o in offres:
-        cnt = qdb("SELECT COUNT(*) as n FROM messages WHERE announcement_id=?", (o["id"],))[0]["n"]
-        with st.expander(f"{o['title']} — {o['wilaya']} (📩 {cnt})"):
-            st.write(o["description"])
-            postulants = qdb("SELECT DISTINCT u.name,u.phone FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.announcement_id=?", (o["id"],))
-            for p in postulants: st.write(f"• {p['name']} — {p['phone']}")
+    if offres:
+        for o in offres:
+            cnt = qdb("SELECT COUNT(*) as n FROM messages WHERE announcement_id=?", (o["id"],))[0]["n"] if qdb("SELECT COUNT(*) as n FROM messages WHERE announcement_id=?", (o["id"],)) else 0
+            with st.expander(f"{o['title']} — {o['wilaya']} (📩 {cnt})"):
+                st.write(o["description"])
+                postulants = qdb("SELECT DISTINCT u.name,u.phone FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.announcement_id=?", (o["id"],))
+                if postulants:
+                    for p in postulants: st.write(f"• {p['name']} — {p['phone']}")
+    else:
+        st.info("Aucune offre d'emploi pour le moment.")
 
 def messages_page():
     st.markdown("### 💬 " + _("messages"))
@@ -1446,10 +1451,13 @@ def messages_page():
         msgs = qdb("SELECT * FROM messages WHERE (sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?) ORDER BY created_at",
                    (user["id"], st.session_state.msg_to, st.session_state.msg_to, user["id"]))
         st.markdown('<div style="max-height:380px;overflow-y:auto;padding:10px;background:#fafaf7;border-radius:12px;border:1px solid #ddd8cc;margin-bottom:12px;">', unsafe_allow_html=True)
-        for m in msgs:
-            css = "msg-me" if m["sender_id"] == user["id"] else "msg-other"
-            align = "right" if m["sender_id"] == user["id"] else "left"
-            st.markdown(f'<div style="text-align:{align}"><div class="{css}">{m["content"]}<div class="msg-t">{m["created_at"][11:16]}</div></div></div>', unsafe_allow_html=True)
+        if msgs:
+            for m in msgs:
+                css = "msg-me" if m["sender_id"] == user["id"] else "msg-other"
+                align = "right" if m["sender_id"] == user["id"] else "left"
+                st.markdown(f'<div style="text-align:{align}"><div class="{css}">{m["content"]}<div class="msg-t">{m["created_at"][11:16]}</div></div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="text-align:center;padding:1rem;">Aucun message. Commencez la conversation !</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
         with st.form("snd_msg", clear_on_submit=True):
             txt = st.text_area("Message…", height=70, key="msg_txt")
@@ -1506,7 +1514,7 @@ def reviews_page():
         my = qdb("SELECT id FROM announcements WHERE user_id=?", (user["id"],))
         if my:
             ids = [str(a["id"]) for a in my]
-            revs = qdb(f"SELECT r.*,u.name FROM reviews r JOIN users u ON r.reviewer_id=u.id WHERE r.announcement_id IN ({','.join(ids)}) ORDER BY r.created_at DESC")
+            revs = qdb(f"SELECT r.*,u.name FROM reviews r JOIN users u ON r.reviewer_id=u.id WHERE r.announcement_id IN ({','.join(ids)}) ORDER BY r.created_at DESC") if ids else []
             if revs:
                 for r in revs:
                     st.markdown(f"{'⭐'*r['rating']} **{r['name']}** — *{r['comment']}*")
@@ -1602,9 +1610,9 @@ def profile_page():
             <p>📅 Inscrit le {user.get('created_at','')[:10]}</p>
         </div></div>""", unsafe_allow_html=True)
     with cs:
-        na = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (user["id"],))[0]["n"]
-        nm = qdb("SELECT COUNT(*) as n FROM messages WHERE sender_id=?", (user["id"],))[0]["n"]
-        nu = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=? AND is_urgent=1", (user["id"],))[0]["n"]
+        na = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (user["id"],))[0]["n"] if qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=?", (user["id"],)) else 0
+        nm = qdb("SELECT COUNT(*) as n FROM messages WHERE sender_id=?", (user["id"],))[0]["n"] if qdb("SELECT COUNT(*) as n FROM messages WHERE sender_id=?", (user["id"],)) else 0
+        nu = qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=? AND is_urgent=1", (user["id"],))[0]["n"] if qdb("SELECT COUNT(*) as n FROM announcements WHERE user_id=? AND is_urgent=1", (user["id"],)) else 0
         for n, l in [(na,"Annonces"),(nm,"Messages"),(nu,"🚨 Urgences")]:
             st.markdown(f'<div class="stat-card" style="margin-bottom:8px;"><div class="num">{n}</div><div class="lbl">{l}</div></div>', unsafe_allow_html=True)
     st.markdown("---")
@@ -1654,7 +1662,9 @@ def main():
             if st.button(_("register"), key="sidebar_register", use_container_width=True):
                 st.session_state.page = "register"; st.rerun()
         st.markdown("---")
-        urg = qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1")[0]["n"]
+        # CORRECTION : sécurisation de la requête des urgences
+        urgent_res = qdb("SELECT COUNT(*) as n FROM announcements WHERE is_urgent=1")
+        urg = urgent_res[0]["n"] if urgent_res else 0
         if urg > 0:
             st.markdown(f'<div style="background:#fde8e8;border:1px solid #fca5a5;border-radius:8px;padding:8px 10px;font-size:0.82rem;margin-bottom:8px;"><strong>🚨 {urg} vente(s) urgente(s)</strong><br><span style="color:#9b1c1c;">Voir les alertes →</span></div>', unsafe_allow_html=True)
             if st.button("Voir les urgences", key="sidebar_urg", use_container_width=True):
