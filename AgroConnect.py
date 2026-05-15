@@ -1,10 +1,9 @@
-# app.py – AgriConnect v3.0 (Amélioration complète avec IA, prédictions, assurance, coopératives, etc.)
+# app.py – AgriConnect v3.0 (Correction des doublons de clés)
 import streamlit as st
 import sqlite3
 import hashlib
 import json
 import base64
-import os
 import io
 import re
 import random
@@ -28,7 +27,7 @@ st.set_page_config(
 )
 DB_FILE = "agriconnect.db"
 
-# ─── 58 Wilayas (conserver l'existant) ───────────────────────────────────────
+# ─── 58 Wilayas (identique à l'original) ─────────────────────────────────────
 WILAYAS = {
     "01 - Adrar": ["Adrar", "Reggane", "Timimoun"],
     "02 - Chlef": ["Chlef", "Ténès", "Abou El Hassan"],
@@ -293,7 +292,6 @@ st.markdown("""
     margin-top: 3rem; font-size: 0.82rem;
 }
 
-/* Responsive columns */
 @media (max-width: 768px) {
     .main-header h1 { font-size: 1.5rem; }
 }
@@ -367,12 +365,12 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # Nouvelles tables pour les fonctionnalités supplémentaires
+    # Nouvelles tables
     c.execute('''CREATE TABLE IF NOT EXISTS parcels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         name TEXT,
-        polygon_coords TEXT,   -- JSON array of [lat,lon]
+        polygon_coords TEXT,
         area_ha REAL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
@@ -457,10 +455,9 @@ def init_db():
         product TEXT,
         wilaya TEXT,
         threshold_price REAL,
-        condition TEXT, -- 'below' or 'above'
+        condition TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    # Table reputation (score recalculé à la demande, stockage simple)
     c.execute('''CREATE TABLE IF NOT EXISTS reputation (
         user_id INTEGER PRIMARY KEY,
         score REAL DEFAULT 2.5,
@@ -544,7 +541,6 @@ def image_to_base64(img_file, max_size=(800, 600), quality=65) -> str | None:
         return None
 
 def generate_contract_pdf(ann, renter_name, owner_name, terms: dict) -> bytes | None:
-    """Génère un contrat PDF sans dépendance externe (texte simple encodé)."""
     lines = [
         "=" * 50,
         f"  {_('contract_title')}",
@@ -564,8 +560,6 @@ def generate_contract_pdf(ann, renter_name, owner_name, terms: dict) -> bytes | 
         "AgriConnect © 2026 — contact@agriconnect.dz",
     ]
     content = "\n".join(lines)
-
-    # Essaie fpdf si disponible
     try:
         from fpdf import FPDF
         pdf = FPDF()
@@ -576,8 +570,6 @@ def generate_contract_pdf(ann, renter_name, owner_name, terms: dict) -> bytes | 
         return pdf.output(dest="S").encode("latin-1")
     except Exception:
         pass
-
-    # Fallback : fichier texte simple
     return content.encode("utf-8")
 
 # ─── Card ─────────────────────────────────────────────────────────────────────
@@ -631,29 +623,14 @@ def render_announce_card(a):
                 st.session_state.page = "contract"
                 st.rerun()
 
-# ─── Pages originales (inchangées) ───────────────────────────────────────────
-# (On conserve toutes les fonctions existantes : login_page, register_page,
-# home_page, generic_announce_page, market_page, job_page, transport_page,
-# grazing_page, pollination_page, fertilizer_page, equipment_page, anem_page,
-# messages_page, reviews_page, contract_page, verification_page, profile_page,
-# et render_announce_card déjà définie. Elles sont trop longues à recopier ici,
-# mais vous les avez dans votre fichier d'origine. Dans la fusion complète,
-# elles doivent être présentes. Pour gagner de la place, je les inclus via un
-# commentaire, mais dans la livraison finale, elles sont toutes écrites.
-# En pratique, je vais les copier depuis votre code original plus bas.)
-
-# Je reprends textuellement votre code original pour ces pages,
-# car il est trop long pour être réécrit de zéro. Je vais l'insérer ici.
-
-# === Début de la reprise du code original (login, register, home, generic, etc.) ===
-
+# ─── Pages originales (avec clés uniques ajoutées) ───────────────────────────
 def login_page():
     col = st.columns([1, 2, 1])[1]
     with col:
         st.markdown("### 🔐 " + _("login"))
-        phone = st.text_input("📱 Téléphone (ex: 0555123456)")
-        pwd   = st.text_input("🔑 Mot de passe", type="password")
-        if st.button(_("login"), use_container_width=True, type="primary"):
+        phone = st.text_input("📱 Téléphone (ex: 0555123456)", key="login_phone")
+        pwd   = st.text_input("🔑 Mot de passe", type="password", key="login_pwd")
+        if st.button(_("login"), key="login_btn", use_container_width=True, type="primary"):
             if not phone or not pwd:
                 st.warning(_("fill_required"))
             else:
@@ -668,7 +645,7 @@ def login_page():
                 else:
                     st.error(_("bad_credentials"))
         st.markdown("---")
-        if st.button(_("register"), use_container_width=True):
+        if st.button(_("register"), key="goto_register_btn", use_container_width=True):
             st.session_state.page = "register"
             st.rerun()
 
@@ -676,15 +653,15 @@ def register_page():
     col = st.columns([1, 2, 1])[1]
     with col:
         st.markdown("### 📝 " + _("register"))
-        name    = st.text_input("Nom complet *")
-        phone   = st.text_input("Téléphone * (ex: 0555123456)")
-        pwd     = st.text_input("Mot de passe *", type="password")
-        pwd2    = st.text_input("Confirmer le mot de passe *", type="password")
-        profile = st.selectbox("Profil *", ["Agriculteur","Éleveur","Apiculteur","Transporteur","Acheteur","ANEM","Travailleur"])
-        wilaya  = st.selectbox(_("wilaya") + " *", list(WILAYAS.keys()))
-        commune = st.selectbox(_("commune") + " *", WILAYAS[wilaya])
+        name    = st.text_input("Nom complet *", key="reg_name")
+        phone   = st.text_input("Téléphone * (ex: 0555123456)", key="reg_phone")
+        pwd     = st.text_input("Mot de passe *", type="password", key="reg_pwd")
+        pwd2    = st.text_input("Confirmer le mot de passe *", type="password", key="reg_pwd2")
+        profile = st.selectbox("Profil *", ["Agriculteur","Éleveur","Apiculteur","Transporteur","Acheteur","ANEM","Travailleur"], key="reg_profile")
+        wilaya  = st.selectbox(_("wilaya") + " *", list(WILAYAS.keys()), key="reg_wilaya")
+        commune = st.selectbox(_("commune") + " *", WILAYAS[wilaya], key="reg_commune")
 
-        if st.button("S'inscrire", use_container_width=True, type="primary"):
+        if st.button("S'inscrire", key="register_submit_btn", use_container_width=True, type="primary"):
             errors = []
             if not name.strip():
                 errors.append("Nom requis.")
@@ -732,11 +709,11 @@ def home_page():
     c_s, c_w, c_b = st.columns([3, 2, 1])
     with c_s:
         search = st.text_input(_("search"), placeholder="Ex: pommes de terre, tracteur...",
-                               value=st.session_state.search_query, label_visibility="collapsed")
+                               value=st.session_state.search_query, key="home_search", label_visibility="collapsed")
     with c_w:
-        wilaya_f = st.selectbox(_("wilaya"), ["Toutes"] + list(WILAYAS.keys()), label_visibility="collapsed")
+        wilaya_f = st.selectbox(_("wilaya"), ["Toutes"] + list(WILAYAS.keys()), key="home_wilaya", label_visibility="collapsed")
     with c_b:
-        if st.button(_("search"), use_container_width=True, type="primary"):
+        if st.button(_("search"), key="home_search_btn", use_container_width=True, type="primary"):
             st.session_state.search_query = search
 
     sql = "SELECT a.*, u.name as author FROM announcements a JOIN users u ON a.user_id=u.id WHERE 1=1"
@@ -859,11 +836,11 @@ def generic_announce_page(module_type: str, fields_config: list, filters: list):
         with st.form(f"form_{module_type}", clear_on_submit=True):
             st.subheader(f"➕ {_('publish')}")
             c1, c2 = st.columns(2)
-            title = c1.text_input("Titre *")
-            unit  = c2.text_input("Unité (ex: DA/kg)")
-            desc  = st.text_area("Description")
+            title = c1.text_input("Titre *", key=f"pub_title_{module_type}")
+            unit  = c2.text_input("Unité (ex: DA/kg)", key=f"pub_unit_{module_type}")
+            desc  = st.text_area("Description", key=f"pub_desc_{module_type}")
             c3, c4 = st.columns(2)
-            price  = c3.number_input("Prix (DA) *", min_value=0.0, step=100.0)
+            price  = c3.number_input("Prix (DA) *", min_value=0.0, step=100.0, key=f"pub_price_{module_type}")
             wilaya = c4.selectbox(_("wilaya"), list(WILAYAS.keys()), key=f"pub_w_{module_type}")
             commune = st.selectbox(_("commune"), WILAYAS[wilaya], key=f"pub_c_{module_type}")
 
@@ -1058,7 +1035,7 @@ def messages_page():
             return
 
         st.subheader(f"Conversation avec {other[0]['name']}")
-        if st.button("← Retour aux conversations"):
+        if st.button("← Retour aux conversations", key="back_convo"):
             st.session_state.msg_to = None
             st.session_state.msg_announce = None
             st.rerun()
@@ -1137,13 +1114,13 @@ def reviews_page():
             return
 
         st.subheader(f"Évaluer : {ann[0]['title']}")
-        if st.button("← Retour"):
+        if st.button("← Retour", key="back_review"):
             st.session_state.review_announce = None
             st.rerun()
 
         with st.form("review_form"):
-            rating  = st.slider("Note (/5)", 1, 5, 4)
-            comment = st.text_area("Commentaire")
+            rating  = st.slider("Note (/5)", 1, 5, 4, key="review_rating")
+            comment = st.text_area("Commentaire", key="review_comment")
             if st.form_submit_button("Soumettre", type="primary", use_container_width=True):
                 query_db(
                     "INSERT INTO reviews (announcement_id,reviewer_id,rating,comment) VALUES (?,?,?,?)",
@@ -1202,18 +1179,18 @@ def contract_page():
         owner = owner[0]
 
         st.subheader(f"📝 Contrat pour : {ann['title']}")
-        if st.button("← Retour"):
+        if st.button("← Retour", key="back_contract"):
             st.session_state.contract_announce = None
             st.rerun()
 
         c1, c2 = st.columns(2)
-        start_date = c1.date_input("Date de début", date.today())
-        end_date   = c2.date_input("Date de fin",   date.today())
-        terms_text = st.text_area("Conditions particulières", height=120)
+        start_date = c1.date_input("Date de début", date.today(), key="contract_start")
+        end_date   = c2.date_input("Date de fin",   date.today(), key="contract_end")
+        terms_text = st.text_area("Conditions particulières", height=120, key="contract_terms")
 
         if start_date > end_date:
             st.error("La date de fin doit être après la date de début.")
-        elif st.button("📥 Générer et télécharger le contrat", type="primary", use_container_width=True):
+        elif st.button("📥 Générer et télécharger le contrat", type="primary", use_container_width=True, key="generate_contract"):
             terms = {"start": start_date.isoformat(), "end": end_date.isoformat(), "details": terms_text}
             pdf_bytes = generate_contract_pdf(ann, user["name"], owner["name"], terms)
             if pdf_bytes:
@@ -1223,7 +1200,8 @@ def contract_page():
                     data=pdf_bytes,
                     file_name=f"contrat_{ann['id']}.{ext}",
                     mime=f"application/{ext}",
-                    use_container_width=True
+                    use_container_width=True,
+                    key="download_contract"
                 )
                 query_db(
                     "INSERT INTO contracts (announcement_id,renter_id,owner_id,start_date,end_date,terms,status) VALUES (?,?,?,?,?,?,?)",
@@ -1259,8 +1237,8 @@ def verification_page():
 
     if not user["is_verified"]:
         st.markdown("Soumettez une pièce d'identité ou registre de commerce pour être vérifié.")
-        doc = st.file_uploader("📎 Document (JPG, PNG, PDF)", type=["jpg","jpeg","png","pdf"])
-        if doc and st.button("📤 Envoyer le document", type="primary"):
+        doc = st.file_uploader("📎 Document (JPG, PNG, PDF)", type=["jpg","jpeg","png","pdf"], key="verif_doc")
+        if doc and st.button("📤 Envoyer le document", type="primary", key="send_doc"):
             if doc.type == "application/pdf":
                 b64 = base64.b64encode(doc.read()).decode()
             else:
@@ -1317,12 +1295,12 @@ def profile_page():
 
     st.markdown("---")
     if not user["is_verified"]:
-        if st.button("🪪 Demander la vérification", type="primary"):
+        if st.button("🪪 Demander la vérification", type="primary", key="request_verif"):
             st.session_state.page = "verification"
             st.rerun()
 
 # =============================================================================
-#  NOUVELLES FONCTIONNALITÉS (ajouts)
+#  NOUVELLES FONCTIONNALITÉS (avec clés uniques)
 # =============================================================================
 
 def get_current_season():
@@ -1333,11 +1311,11 @@ def get_current_season():
     return "Automne"
 
 def call_ai_assistant(prompt, lang, wilaya, saison, has_image):
-    # Simulation : remplacer par appel à OpenAI/Claude
+    # Simulation (remplacer par API OpenAI/Claude)
     return f"🌾 **Réponse personnalisée**\n\nEn {wilaya} en {saison}, il est conseillé de {'irriguer modérément' if saison=='Été' else 'surveiller les gelées'}.\n\nVotre question : \"{prompt}\"\n\nRéponse détaillée : (intégration API OpenAI/Claude disponible en configurant la clé API dans les secrets Streamlit). Pour l'instant, voici une fiche technique : https://example.com/guide_{wilaya}_{saison}"
 
 def diagnose_plant_disease(image_file, lang, wilaya, saison):
-    # Simulation : remplacer par GPT-4V
+    # Simulation
     return f"🔬 **Diagnostic simulé**\n\nD'après l'image, la culture semble souffrir de **mildiou** (taches brunes sur feuilles). Traitement recommandé : bouillie bordelaise (20g/L), appliquer tôt le matin. Prévention : rotation des cultures. Contexte {wilaya} - saison {saison}."
 
 def ai_assistant_page():
@@ -1347,17 +1325,17 @@ def ai_assistant_page():
         st.warning(_("login_required"))
         return
 
-    lang_assistant = st.selectbox("Langue de réponse", ["français", "arabe dialectal algérien", "tamazight", "anglais"])
+    lang_assistant = st.selectbox("Langue de réponse", ["français", "arabe dialectal algérien", "tamazight", "anglais"], key="ai_lang")
     wilaya_user = user.get("wilaya", "")
     saison = get_current_season()
 
     for msg in st.session_state.ai_messages:
         st.chat_message(msg["role"]).write(msg["content"])
 
-    uploaded_file = st.file_uploader("📷 Prendre une photo de votre culture (optionnel)", type=["jpg","jpeg","png"])
+    uploaded_file = st.file_uploader("📷 Prendre une photo de votre culture (optionnel)", type=["jpg","jpeg","png"], key="ai_photo")
     if uploaded_file:
         st.image(uploaded_file, caption="Culture à diagnostiquer", width=300)
-        if st.button("🔍 Diagnostiquer cette photo"):
+        if st.button("🔍 Diagnostiquer cette photo", key="diagnose_btn"):
             with st.spinner("Analyse en cours..."):
                 diagnosis = diagnose_plant_disease(uploaded_file, lang_assistant, wilaya_user, saison)
                 st.session_state.ai_messages.append({"role": "assistant", "content": diagnosis})
@@ -1374,8 +1352,8 @@ def ai_assistant_page():
 def price_prediction_page():
     st.markdown("### 📈 Prédiction des prix des marchés")
     products = ["Pomme de terre", "Tomate", "Oignon", "Carotte", "Blé dur", "Orge"]
-    product = st.selectbox("Produit", products)
-    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()))
+    product = st.selectbox("Produit", products, key="price_product")
+    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()), key="price_wilaya")
     
     dates = pd.date_range(end=date.today(), periods=90, freq='D')
     prices = np.random.normal(50, 10, len(dates)).cumsum() + 20
@@ -1390,16 +1368,16 @@ def price_prediction_page():
     fig.update_layout(title=f"Prix du {product} à {wilaya}", xaxis_title="Date", yaxis_title="DA/kg")
     st.plotly_chart(fig, use_container_width=True)
     
-    if st.button("🔔 M'alerter si prix baisse de 10% dans 5 jours"):
+    if st.button("🔔 M'alerter si prix baisse de 10% dans 5 jours", key="price_alert"):
         st.success("Alerte configurée. Vous serez notifié par SMS.")
     
     st.info("Le scraping automatique des prix ONAB et l'utilisation du modèle LSTM/Prophet nécessitent un backend dédié. Contactez support@agriconnect.dz pour activer.")
 
 def satellite_analysis_page():
     st.markdown("### 🛰️ Analyse par satellite (NDVI / stress hydrique)")
-    lat = st.number_input("Latitude", value=36.0, step=0.01)
-    lon = st.number_input("Longitude", value=3.0, step=0.01)
-    if st.button("Analyser cette parcelle"):
+    lat = st.number_input("Latitude", value=36.0, step=0.01, key="sat_lat")
+    lon = st.number_input("Longitude", value=3.0, step=0.01, key="sat_lon")
+    if st.button("Analyser cette parcelle", key="sat_analyze"):
         with st.spinner("Récupération des indices Sentinel Hub..."):
             ndvi = random.uniform(0.2, 0.8)
             ndwi = random.uniform(-0.2, 0.5)
@@ -1412,33 +1390,33 @@ def satellite_analysis_page():
             m = folium.Map(location=[lat, lon], zoom_start=13)
             folium.TileLayer('Stamen Terrain').add_to(m)
             folium.CircleMarker([lat, lon], radius=10, color='green', fill=True).add_to(m)
-            st_folium(m, width=700, height=400)
+            st_folium(m, width=700, height=400, key="sat_map")
     st.info("L'intégration complète avec Sentinel Hub (gratuit jusqu'à 10k requêtes/mois) nécessite une inscription sur https://scihub.copernicus.eu/.")
 
 def insurance_page():
     st.markdown("### 🛡️ Micro-assurance récolte (partenariat SAA)")
-    culture = st.selectbox("Type de culture", ["Blé", "Orge", "Pomme de terre", "Tomate", "Olive"])
-    superficie = st.number_input("Superficie (hectares)", min_value=0.1, step=0.1)
-    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()))
+    culture = st.selectbox("Type de culture", ["Blé", "Orge", "Pomme de terre", "Tomate", "Olive"], key="ins_culture")
+    superficie = st.number_input("Superficie (hectares)", min_value=0.1, step=0.1, key="ins_area")
+    wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()), key="ins_wilaya")
     prime = superficie * 150
     st.info(f"Prime mensuelle estimée : **{prime:.0f} DA**")
-    if st.button("Souscrire maintenant"):
+    if st.button("Souscrire maintenant", key="ins_subscribe"):
         query_db("INSERT INTO insurance_subscriptions (user_id, culture, area_ha, wilaya, premium_monthly) VALUES (?,?,?,?,?)",
                  (st.session_state.user["id"], culture, superficie, wilaya, prime), fetch=False)
         st.success("Demande envoyée à la SAA. Vous serez contacté sous 48h.")
     st.markdown("---")
     st.subheader("Indemnisation automatique")
     st.write("Déclenchée si : gel (T°<0°C) ou sécheresse (0mm pluie pendant 30j).")
-    if st.button("Simuler un sinistre"):
+    if st.button("Simuler un sinistre", key="ins_simulate"):
         st.warning("Simulation : gel détecté le 15 janvier. Indemnisation de 12 000 DA versée sur votre compte CCP sous 48h.")
 
 def community_credit_page():
     st.markdown("### 🤝 Crédit agricole communautaire")
     st.write("Formez un groupe de 5 à 20 agriculteurs, cotisez mensuellement, et participez au tirage.")
-    if st.button("➕ Créer un groupe"):
-        group_name = st.text_input("Nom du groupe")
-        monthly = st.number_input("Cotisation mensuelle (DA)", min_value=500, step=500, value=2000)
-        if group_name and st.button("Valider la création"):
+    if st.button("➕ Créer un groupe", key="credit_create_group"):
+        group_name = st.text_input("Nom du groupe", key="credit_name")
+        monthly = st.number_input("Cotisation mensuelle (DA)", min_value=500, step=500, value=2000, key="credit_fee")
+        if group_name and st.button("Valider la création", key="credit_validate"):
             gid = query_db("INSERT INTO credit_groups (name, created_by, monthly_fee) VALUES (?,?,?)",
                            (group_name, st.session_state.user["id"], monthly), fetch=False)
             query_db("INSERT INTO credit_group_members (group_id, user_id) VALUES (?,?)", (gid, st.session_state.user["id"]), fetch=False)
@@ -1455,13 +1433,11 @@ def community_credit_page():
 def parcels_page():
     st.markdown("### 📍 Mes parcelles (GPS & journal cultural)")
     st.subheader("Enregistrer une nouvelle parcelle")
-    points_text = st.text_area("Entrez les coordonnées (lat,lon) séparées par des virgules :\n36.123,3.456\n36.124,3.457\n...")
-    if st.button("Calculer superficie"):
+    points_text = st.text_area("Entrez les coordonnées (lat,lon) séparées par des virgules :\n36.123,3.456\n36.124,3.457\n...", key="parcel_points")
+    if st.button("Calculer superficie", key="parcel_calc"):
         try:
-            # Calcul simplifié (simulation)
             area = random.uniform(0.5, 20)
             st.info(f"Superficie calculée : {area:.2f} ha")
-            # Sauvegarde
             query_db("INSERT INTO parcels (user_id, name, polygon_coords, area_ha) VALUES (?,?,?,?)",
                      (st.session_state.user["id"], "Ma parcelle", points_text, area), fetch=False)
             st.success("Parcelle enregistrée.")
@@ -1471,25 +1447,25 @@ def parcels_page():
     parcels_list = query_db("SELECT id, name FROM parcels WHERE user_id=?", (st.session_state.user["id"],))
     if parcels_list:
         with st.form("journal_form"):
-            parcel_id = st.selectbox("Parcelle", [(p["id"], p["name"]) for p in parcels_list], format_func=lambda x: x[1])[0]
-            date_semis = st.date_input("Date de semis")
-            culture = st.text_input("Culture")
-            rendement = st.number_input("Rendement (qx/ha)", min_value=0.0)
-            intrants = st.text_area("Intrants utilisés")
+            parcel_id = st.selectbox("Parcelle", [(p["id"], p["name"]) for p in parcels_list], format_func=lambda x: x[1], key="journal_parcel")[0]
+            date_semis = st.date_input("Date de semis", key="journal_date")
+            culture = st.text_input("Culture", key="journal_culture")
+            rendement = st.number_input("Rendement (qx/ha)", min_value=0.0, key="journal_yield")
+            intrants = st.text_area("Intrants utilisés", key="journal_inputs")
             if st.form_submit_button("Enregistrer"):
                 query_db("INSERT INTO crop_journal (parcel_id, culture, sowing_date, yield_qx_ha, inputs) VALUES (?,?,?,?,?)",
                          (parcel_id, culture, date_semis.isoformat(), rendement, intrants), fetch=False)
                 st.success("Journal mis à jour")
-    st.download_button("📄 Exporter toutes mes parcelles en PDF (subvention FNRDA)", data=b"Exemple PDF", file_name="parcelles.pdf")
+    st.download_button("📄 Exporter toutes mes parcelles en PDF (subvention FNRDA)", data=b"Exemple PDF", file_name="parcelles.pdf", key="export_parcels")
 
 def cooperatives_page():
     st.markdown("### 🏢 Coopératives numériques")
-    action = st.radio("Action", ["Créer une coopérative", "Rejoindre une coopérative", "Mes coopératives"])
+    action = st.radio("Action", ["Créer une coopérative", "Rejoindre une coopérative", "Mes coopératives"], key="coop_action")
     if action == "Créer une coopérative":
-        name = st.text_input("Nom")
-        filiere = st.selectbox("Filière", ["Céréales", "Maraîchage", "Élevage", "Apiculture"])
-        wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()))
-        if st.button("Créer"):
+        name = st.text_input("Nom", key="coop_name")
+        filiere = st.selectbox("Filière", ["Céréales", "Maraîchage", "Élevage", "Apiculture"], key="coop_filiere")
+        wilaya = st.selectbox("Wilaya", list(WILAYAS.keys()), key="coop_wilaya")
+        if st.button("Créer", key="coop_create"):
             query_db("INSERT INTO cooperatives (name, filiere, wilaya, created_by) VALUES (?,?,?,?)",
                      (name, filiere, wilaya, st.session_state.user["id"]), fetch=False)
             st.success(f"Coopérative {name} créée ! Invitez des membres par SMS.")
@@ -1500,10 +1476,10 @@ def cooperatives_page():
             if st.button("Passer une commande groupée", key=f"cmd_{coop['id']}"):
                 st.info("Fonction d'agrégation de commandes (ex: 10 sacs engrais, prix négocié).")
             if st.button("Voter pour le fournisseur", key=f"vote_{coop['id']}"):
-                st.radio("Choix du fournisseur", ["Engrais A", "Engrais B", "Engrais C"])
+                st.radio("Choix du fournisseur", ["Engrais A", "Engrais B", "Engrais C"], key=f"vote_radio_{coop['id']}")
                 st.success("Vote enregistré.")
             if st.button("📄 Générer contrat collectif", key=f"contrat_{coop['id']}"):
-                st.download_button("Télécharger contrat PDF", b"...", "contrat_coop.pdf")
+                st.download_button("Télécharger contrat PDF", b"...", "contrat_coop.pdf", key=f"dl_contrat_{coop['id']}")
     st.markdown("---")
     st.subheader("Tableau de bord Coopératives")
     st.dataframe(pd.DataFrame({"Membre": ["Ali", "Mohamed"], "Contribution (DA)": [5000, 7200], "Part bénéfices": [0.4, 0.6]}))
@@ -1512,7 +1488,6 @@ def reputation_page():
     st.markdown("### ⭐ Système de réputation vérifiée")
     user = st.session_state.user
     if not user: return
-    # Récupérer ou initialiser score
     rep = query_db("SELECT * FROM reputation WHERE user_id=?", (user["id"],))
     if not rep:
         score = random.uniform(3,5)
@@ -1521,8 +1496,7 @@ def reputation_page():
         score = rep[0]["score"]
     st.metric("Votre score de confiance", f"{score:.1f} / 5")
     st.write("**Badges obtenus** : ✅ Vendeur fiable, 🚛 Transport vérifié")
-    if st.button("Vérifier mon NIF (Numéro d'Identification Fiscale)"):
-        # Appel API DGI simulé
+    if st.button("Vérifier mon NIF (Numéro d'Identification Fiscale)", key="verify_nif"):
         st.success("NIF validé via API DGI. +0.2 point de réputation.")
         query_db("UPDATE reputation SET score = score + 0.2, nif_verified=1 WHERE user_id=?", (user["id"],), fetch=False)
     st.subheader("Top vendeurs de votre wilaya")
@@ -1531,10 +1505,10 @@ def reputation_page():
 def forum_page():
     st.markdown("### 💬 Forum communautaire agricole")
     with st.expander("➕ Nouvelle discussion"):
-        title = st.text_input("Titre")
-        content = st.text_area("Message")
-        tags = st.multiselect("Tags", ["Maladie", "Irrigation", "Prix", "Météo", "Conseil"])
-        if st.button("Publier"):
+        title = st.text_input("Titre", key="forum_title")
+        content = st.text_area("Message", key="forum_content")
+        tags = st.multiselect("Tags", ["Maladie", "Irrigation", "Prix", "Météo", "Conseil"], key="forum_tags")
+        if st.button("Publier", key="forum_publish"):
             query_db("INSERT INTO forum_posts (user_id, title, content, tags) VALUES (?,?,?,?)",
                      (st.session_state.user["id"], title, content, ",".join(tags)), fetch=False)
             st.success("Post ajouté")
@@ -1543,13 +1517,12 @@ def forum_page():
         with st.container():
             st.markdown(f"**{p['title']}** par {p['name']} 👍 {p['upvotes']}  `{p['tags']}`")
             st.write(p['content'])
-            if st.button("Répondre", key=f"reply_{p['id']}"):
+            if st.button("Répondre", key=f"reply_btn_{p['id']}"):
                 reply = st.text_area("Votre réponse", key=f"reply_text_{p['id']}")
                 if st.button("Envoyer réponse", key=f"send_reply_{p['id']}"):
                     query_db("INSERT INTO forum_replies (post_id, user_id, content) VALUES (?,?,?)",
                              (p['id'], st.session_state.user["id"], reply), fetch=False)
                     st.success("Réponse ajoutée.")
-            # Afficher les réponses existantes
             replies = query_db("SELECT r.*, u.name FROM forum_replies r JOIN users u ON r.user_id=u.id WHERE r.post_id=? ORDER BY r.created_at", (p['id'],))
             for r in replies:
                 st.markdown(f"&nbsp;&nbsp;&nbsp;↳ **{r['name']}** : {r['content']}")
@@ -1557,9 +1530,9 @@ def forum_page():
 
 def weather_page():
     st.markdown("### 🌦️ Météo hyper-locale (API Open-Meteo)")
-    lat = st.number_input("Latitude", value=36.7763)
-    lon = st.number_input("Longitude", value=3.0588)
-    if st.button("Météo pour ma parcelle"):
+    lat = st.number_input("Latitude", value=36.7763, key="weather_lat")
+    lon = st.number_input("Longitude", value=3.0588, key="weather_lon")
+    if st.button("Météo pour ma parcelle", key="weather_get"):
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=Africa/Algiers"
         try:
             response = requests.get(url).json()
@@ -1581,10 +1554,10 @@ def weather_page():
 
 def soil_analysis_page():
     st.markdown("### 🧪 Analyse de sol (photo + IA)")
-    uploaded = st.file_uploader("Prenez une photo de votre sol à l'horizontale", type=["jpg","jpeg","png"])
+    uploaded = st.file_uploader("Prenez une photo de votre sol à l'horizontale", type=["jpg","jpeg","png"], key="soil_photo")
     if uploaded:
         st.image(uploaded, width=300)
-        if st.button("Analyser ce sol"):
+        if st.button("Analyser ce sol", key="soil_analyze"):
             texture = random.choice(["Argilo-limoneux", "Sablo-argileux", "Limoneux"])
             ph_estime = round(random.uniform(5.5, 7.5),1)
             st.success(f"Texture estimée : {texture}")
@@ -1603,7 +1576,7 @@ def transport_optimization_page():
         for a in annonces:
             st.write(f"**{a['title']}** - {a['wilaya']} -> {json.loads(a['data']).get('destination', '')}")
     st.subheader("Suggestions de chargements compatibles")
-    if st.button("Rechercher des retours chargés pour mon trajet"):
+    if st.button("Rechercher des retours chargés pour mon trajet", key="optim_search"):
         st.success("2 chargements compatibles trouvés : 5 t de blé vers Constantine, 3 t d'engrais vers Annaba.")
         st.write("Taux de remplissage moyen : 78% | CA/km : 12 DA")
 
@@ -1613,13 +1586,13 @@ def surplus_alert_page():
     for a in urgent_ann:
         st.warning(f"⚠️ URGENCE : {a['title']} - {a['wilaya']} - Prix réduit de 30% !")
     with st.form("urgence_form"):
-        annonce_id = st.number_input("ID de votre annonce", min_value=1)
-        reduction = st.selectbox("Remise proposée", ["-10%", "-20%", "-30%"])
+        annonce_id = st.number_input("ID de votre annonce", min_value=1, key="urgent_id")
+        reduction = st.selectbox("Remise proposée", ["-10%", "-20%", "-30%"], key="urgent_reduction")
         if st.form_submit_button("Activer le mode Urgence"):
             st.success("Notification envoyée à tous les acheteurs dans un rayon de 50 km.")
     st.info("Vous pouvez également faire don de votre surplus. Contactez la Banque Alimentaire au 0550 12 34 56.")
 
-# ─── Navbar enrichie ─────────────────────────────────────────────────────────
+# ─── Navbar enrichie (avec clés uniques) ────────────────────────────────────
 def render_navbar():
     base_items = [
         ("home", _("home")), ("market", _("market")), ("job", _("job")),
@@ -1655,9 +1628,14 @@ def render_navbar():
                     st.rerun()
     else:
         c1, c2, c3 = st.columns(3)
-        for col, page, label in [(c1,"home",_("home")),(c2,"login",_("login")),(c3,"register",_("register"))]:
+        for col, page, label, key in [
+            (c1, "home", _("home"), "nav_home_public"),
+            (c2, "login", _("login"), "nav_login_public"),
+            (c3, "register", _("register"), "nav_register_public")
+        ]:
             with col:
-                if st.button(label, use_container_width=True, type="primary" if st.session_state.page==page else "secondary"):
+                if st.button(label, key=key, use_container_width=True,
+                             type="primary" if st.session_state.page == page else "secondary"):
                     st.session_state.page = page
                     st.rerun()
 
@@ -1671,7 +1649,7 @@ def main():
         st.markdown("### 🌐 Langue")
         lang = st.selectbox("", ["fr","ar","en"],
                             index=["fr","ar","en"].index(st.session_state.lang),
-                            label_visibility="collapsed")
+                            key="sidebar_lang", label_visibility="collapsed")
         if lang != st.session_state.lang:
             st.session_state.lang = lang
             st.rerun()
@@ -1681,15 +1659,15 @@ def main():
             verified_badge = "✅" if u["is_verified"] else "⏳"
             st.markdown(f"**👤 {u['name']}** {verified_badge}")
             st.caption(f"{u['profile_type']} — {u['wilaya']}")
-            if st.button(_("logout"), use_container_width=True):
+            if st.button(_("logout"), key="sidebar_logout", use_container_width=True):
                 st.session_state.user = None
                 st.session_state.page = "home"
                 st.rerun()
         else:
-            if st.button(_("login"), use_container_width=True, type="primary"):
+            if st.button(_("login"), key="sidebar_login", use_container_width=True, type="primary"):
                 st.session_state.page = "login"
                 st.rerun()
-            if st.button(_("register"), use_container_width=True):
+            if st.button(_("register"), key="sidebar_register", use_container_width=True):
                 st.session_state.page = "register"
                 st.rerun()
         st.markdown("---")
@@ -1699,9 +1677,14 @@ def main():
         render_navbar()
     else:
         c1, c2, c3 = st.columns(3)
-        for col, page, label in [(c1,"home",_("home")),(c2,"login",_("login")),(c3,"register",_("register"))]:
+        for col, page, label, key in [
+            (c1, "home", _("home"), "nav_home_public"),
+            (c2, "login", _("login"), "nav_login_public"),
+            (c3, "register", _("register"), "nav_register_public")
+        ]:
             with col:
-                if st.button(label, use_container_width=True, type="primary" if st.session_state.page==page else "secondary"):
+                if st.button(label, key=key, use_container_width=True,
+                             type="primary" if st.session_state.page == page else "secondary"):
                     st.session_state.page = page
                     st.rerun()
 
