@@ -1,4 +1,4 @@
-# app.py – AgriConnect Full (Streamlit + SQLite + APIs externes)
+# app.py – AgriConnect Full corrigé (Streamlit + SQLite + APIs externes)
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -88,6 +88,22 @@ def _(text):
 st.set_page_config(page_title="AgriConnect", layout="wide", initial_sidebar_state="expanded")
 DB_FILE = "agriconnect.db"
 
+# ---------- Initialisation de la session state (CRUCIAL) ----------
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "page" not in st.session_state:
+    st.session_state.page = "home"
+if "lang" not in st.session_state:
+    st.session_state.lang = "fr"
+if "msg_to" not in st.session_state:
+    st.session_state.msg_to = None
+if "msg_announce" not in st.session_state:
+    st.session_state.msg_announce = None
+if "review_announce" not in st.session_state:
+    st.session_state.review_announce = None
+if "contract_announce" not in st.session_state:
+    st.session_state.contract_announce = None
+
 # ---------- Initialisation base de données améliorée ----------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -123,7 +139,6 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
     )''')
-    # Ajout d'une table pour les contrats
     c.execute('''CREATE TABLE IF NOT EXISTS contracts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         announcement_id INTEGER,
@@ -267,7 +282,7 @@ def register_page():
 # ---------- Page d'accueil ----------
 def home_page():
     st.title(_("home"))
-    if st.session_state.user:
+    if st.session_state.user is not None:
         profile = st.session_state.user['profile_type']
         if profile == 'Agriculteur':
             st.info("Suggestions: Louez vos parcelles après récolte, trouvez des apiculteurs pour pollinisation.")
@@ -373,7 +388,7 @@ def generic_announce_page(module_type, fields_config, filters):
             video_url = st.text_input("Ou lien vidéo (YouTube/Vimeo)")
             submitted = st.form_submit_button(_("publish"))
             if submitted:
-                if not st.session_state.user:
+                if st.session_state.user is None:
                     st.error("Connectez-vous d'abord")
                 else:
                     img_b64_list = []
@@ -482,13 +497,7 @@ def equipment_page():
 # ---------- Messagerie ----------
 def messages_page():
     st.title(_("messages"))
-    if "msg_to" not in st.session_state:
-        st.session_state.msg_to = None
-        st.session_state.msg_announce = None
-    contacts = query_db("SELECT DISTINCT u.id, u.name FROM users u JOIN messages m ON (u.id=m.sender_id OR u.id=m.receiver_id) WHERE (m.sender_id=? OR m.receiver_id=?) AND u.id!=?",
-                        (st.session_state.user['id'], st.session_state.user['id'], st.session_state.user['id']))
-    contact_dict = {c['name']: c['id'] for c in contacts}
-    if st.session_state.msg_to and st.session_state.msg_to != st.session_state.user['id']:
+    if st.session_state.msg_to is not None and st.session_state.msg_to != st.session_state.user['id']:
         other_user = query_db("SELECT name FROM users WHERE id=?", (st.session_state.msg_to,))
         if other_user:
             st.subheader(f"Conversation avec {other_user[0]['name']}")
@@ -504,6 +513,9 @@ def messages_page():
                              (st.session_state.user['id'], st.session_state.msg_to, st.session_state.msg_announce, msg_text), fetch=False)
                     st.rerun()
     else:
+        contacts = query_db("SELECT DISTINCT u.id, u.name FROM users u JOIN messages m ON (u.id=m.sender_id OR u.id=m.receiver_id) WHERE (m.sender_id=? OR m.receiver_id=?) AND u.id!=?",
+                            (st.session_state.user['id'], st.session_state.user['id'], st.session_state.user['id']))
+        contact_dict = {c['name']: c['id'] for c in contacts}
         st.write("Sélectionnez un contact")
         for name, uid in contact_dict.items():
             if st.button(name):
@@ -519,7 +531,7 @@ def messages_page():
 # ---------- Évaluations ----------
 def reviews_page():
     st.title(_("reviews"))
-    if "review_announce" in st.session_state and st.session_state.review_announce:
+    if st.session_state.review_announce:
         annonce = query_db("SELECT * FROM announcements WHERE id=?", (st.session_state.review_announce,))
         if annonce:
             st.subheader(f"Évaluer : {annonce[0]['title']}")
@@ -545,7 +557,7 @@ def reviews_page():
 # ---------- Contrats ----------
 def contract_page():
     st.title(_("contract"))
-    if "contract_announce" in st.session_state and st.session_state.contract_announce:
+    if st.session_state.contract_announce:
         annonce = query_db("SELECT * FROM announcements WHERE id=?", (st.session_state.contract_announce,))[0]
         owner = query_db("SELECT * FROM users WHERE id=?", (annonce['user_id'],))[0]
         renter = st.session_state.user
@@ -591,11 +603,11 @@ def profile_page():
 
 # ---------- Gestion des langues ----------
 def setup_language():
-    if "lang" not in st.session_state:
+    if st.session_state.lang not in ["fr", "ar"]:
         st.session_state.lang = "fr"
     col1, col2 = st.columns([0.9, 0.1])
     with col2:
-        lang = st.selectbox("🌐", ["fr", "ar"], index=0, key="lang_selector")
+        lang = st.selectbox("🌐", ["fr", "ar"], index=0 if st.session_state.lang == "fr" else 1, key="lang_selector")
         if lang != st.session_state.lang:
             st.session_state.lang = lang
             st.rerun()
@@ -621,9 +633,8 @@ def main():
     init_db()
     setup_language()
     st.sidebar.title(_("app_name"))
-    if st.session_state.get("user"):
+    if st.session_state.user is not None:
         st.sidebar.write(f"👤 {st.session_state.user['name']} ({st.session_state.user['profile_type']})")
-        # Navigation dynamique
         nav_items = [
             ("home", _("home")),
             ("market", _("market")),
@@ -632,7 +643,7 @@ def main():
             ("grazing", _("grazing")),
             ("pollination", _("pollination")),
             ("fertilizer", _("fertilizer")),
-            ("equipment", _("equipment")),  # NOUVEAU
+            ("equipment", _("equipment")),
             ("messages", _("messages")),
             ("reviews", _("reviews")),
             ("contract", _("contract")),
@@ -655,8 +666,6 @@ def main():
             register_page()
 
     # Affichage de la page sélectionnée
-    if "page" not in st.session_state:
-        st.session_state.page = "home"
     if st.session_state.page in PAGES:
         PAGES[st.session_state.page]()
     else:
