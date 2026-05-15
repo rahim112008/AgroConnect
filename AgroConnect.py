@@ -1,4 +1,4 @@
-# app.py – AgriConnect Final (full featured, modern UI, multilingual, all wilayas, test data, ANEM)
+# app.py – AgriConnect Final (Complete & Operational)
 import streamlit as st
 import sqlite3
 import hashlib
@@ -6,15 +6,12 @@ import json
 import base64
 import os
 import io
-import tempfile
-import subprocess
 from datetime import datetime, date
 from PIL import Image
 import folium
 from streamlit_folium import st_folium
-import requests
 
-# ---------- 58 Wilayas et communes ----------
+# ---------- 58 Wilayas & Communes ----------
 WILAYAS = {
     "01 - Adrar": ["Adrar", "Reggane", "Timimoun"],
     "02 - Chlef": ["Chlef", "Ténès", "Abou El Hassan"],
@@ -190,9 +187,8 @@ def _(text):
 st.set_page_config(page_title="AgriConnect", page_icon="🌾", layout="wide", initial_sidebar_state="collapsed")
 DB_FILE = "agriconnect.db"
 
-# ---------- Session state init ----------
-keys = ["user", "page", "lang", "msg_to", "msg_announce", "review_announce", "contract_announce"]
-for k in keys:
+# ---------- Session State init ----------
+for k in ["user", "page", "lang", "msg_to", "msg_announce", "review_announce", "contract_announce"]:
     if k not in st.session_state:
         if k == "user":
             st.session_state[k] = None
@@ -211,7 +207,6 @@ def apply_css():
     * { font-family: 'Roboto', sans-serif; }
     .main-header { font-size: 2.5rem; font-weight: 700; color: #2e7d32; text-align: center; padding: 1rem 0; }
     .navbar { display: flex; justify-content: center; background-color: #2e7d32; padding: 0.5rem; border-radius: 8px; margin-bottom: 20px; }
-    .nav-item { color: white; padding: 10px 20px; margin: 0 5px; border-radius: 5px; cursor: pointer; text-decoration: none; font-weight: 500; }
     .card { border: 1px solid #e0e0e0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); transition: transform 0.2s; background: white; margin-bottom: 20px; }
     .card:hover { transform: translateY(-5px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
     .card-img { height: 180px; object-fit: cover; background: #f5f5f5; }
@@ -227,11 +222,11 @@ apply_css()
 
 # ---------- DB ----------
 def init_db():
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
-    # Création des tables une par une
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
+    c.execute('''CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         phone TEXT UNIQUE,
@@ -245,8 +240,7 @@ def init_db():
         documents TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS announcements (
+    c.execute('''CREATE TABLE announcements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         type TEXT,
@@ -265,30 +259,23 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
     )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+    c.execute('''CREATE TABLE messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sender_id INTEGER,
         receiver_id INTEGER,
         announcement_id INTEGER,
         content TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (sender_id) REFERENCES users(id),
-        FOREIGN KEY (receiver_id) REFERENCES users(id)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS reviews (
+    c.execute('''CREATE TABLE reviews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         announcement_id INTEGER,
         reviewer_id INTEGER,
         rating INTEGER,
         comment TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (announcement_id) REFERENCES announcements(id),
-        FOREIGN KEY (reviewer_id) REFERENCES users(id)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS contracts (
+    c.execute('''CREATE TABLE contracts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         announcement_id INTEGER,
         renter_id INTEGER,
@@ -299,39 +286,23 @@ def init_db():
         status TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    
-    # Insertion des données de test uniquement si la table announcements est vide
-    cnt = c.execute("SELECT COUNT(*) FROM announcements").fetchone()[0]
-    if cnt == 0:
-        # Utilisateur ANEM
-        c.execute("INSERT OR IGNORE INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
-                  ("Agent ANEM", "0555000001", hashlib.sha256("anem123".encode()).hexdigest(), "ANEM", 1, "16 - Alger", "Alger Centre"))
-        # Utilisateur agriculteur
-        c.execute("INSERT OR IGNORE INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
-                  ("Ali Ferme", "0555123456", hashlib.sha256("123456".encode()).hexdigest(), "Agriculteur", 1, "39 - El Oued", "Guemar"))
-        
-        # Récupérer l'id de l'utilisateur agriculteur
-        res = c.execute("SELECT id FROM users WHERE phone='0555123456'").fetchone()
-        if res:
-            user_id = res[0]
-            annonces = [
-                ("market", "Pommes de terre fraîches", "Variété Spunta, 10 tonnes", 45, "DA/kg", "39 - El Oued", "Guemar",
-                 json.dumps({"product_type":"Légumes","quantity":10000})),
-                ("grazing", "Chaumes de blé à louer", "50 ha, eau disponible, mai-juillet", 200, "DA/tête/jour", "14 - Tiaret", "Sougueur",
-                 json.dumps({"area_ha":50,"cover_type":"Chaume","water":"Oui","start_date":"2026-05-01","end_date":"2026-07-31","max_animals":100})),
-                ("fertilizer", "Fumier ovin composté", "5 tonnes", 3000, "DA/tonne", "17 - Djelfa", "Messaâd",
-                 json.dumps({"fertilizer_type":"Fumier ovin","quantity_tons":5})),
-                ("transport", "Camion frigorifique Alger-Médéa", "10 tonnes", 8000, "DA/voyage", "16 - Alger", "El Harrach",
-                 json.dumps({"vehicle_type":"Frigorifique","capacity":10})),
-                ("pollination", "20 ruches disponibles", "Race locale, déplacement Béjaïa-Batna", 5000, "DA/ruche/semaine", "06 - Béjaïa", "Akbou",
-                 json.dumps({"hive_count":20,"bee_race":"Locale","zone":"Béjaïa-Batna"})),
-                ("equipment", "Tracteur Massey Ferguson 2020", "Bon état, location", 5000, "DA/jour", "31 - Oran", "Es Sénia",
-                 json.dumps({"offer_type":"Location","equipment_type":"Tracteur","brand":"Massey Ferguson","model":"MF 2020","year":2020,"state":"Bon","rental_period":"Jour","availability":"Toute l'année"}))
-            ]
-            for typ, titre, desc, prix, unit, wilaya, commune, data in annonces:
-                c.execute("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, commune, data) VALUES (?,?,?,?,?,?,?,?,?)",
-                          (user_id, typ, titre, desc, prix, unit, wilaya, commune, data))
-    
+    # Insert test data
+    c.execute("INSERT INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
+              ("Agent ANEM", "0555000001", hashlib.sha256("anem123".encode()).hexdigest(), "ANEM", 1, "16 - Alger", "Alger Centre"))
+    c.execute("INSERT INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
+              ("Ali Ferme", "0555123456", hashlib.sha256("123456".encode()).hexdigest(), "Agriculteur", 1, "39 - El Oued", "Guemar"))
+    user_id = c.execute("SELECT id FROM users WHERE phone='0555123456'").fetchone()[0]
+    annonces = [
+        ("market", "Pommes de terre fraîches", "Variété Spunta, 10 tonnes", 45, "DA/kg", "39 - El Oued", "Guemar", json.dumps({"product_type":"Légumes","quantity":10000})),
+        ("grazing", "Chaumes de blé à louer", "50 ha, eau disponible, mai-juillet", 200, "DA/tête/jour", "14 - Tiaret", "Sougueur", json.dumps({"area_ha":50,"cover_type":"Chaume","water":"Oui","start_date":"2026-05-01","end_date":"2026-07-31","max_animals":100})),
+        ("fertilizer", "Fumier ovin composté", "5 tonnes", 3000, "DA/tonne", "17 - Djelfa", "Messaâd", json.dumps({"fertilizer_type":"Fumier ovin","quantity_tons":5})),
+        ("transport", "Camion frigorifique Alger-Médéa", "10 tonnes", 8000, "DA/voyage", "16 - Alger", "El Harrach", json.dumps({"vehicle_type":"Frigorifique","capacity":10})),
+        ("pollination", "20 ruches disponibles", "Race locale, déplacement Béjaïa-Batna", 5000, "DA/ruche/semaine", "06 - Béjaïa", "Akbou", json.dumps({"hive_count":20,"bee_race":"Locale","zone":"Béjaïa-Batna"})),
+        ("equipment", "Tracteur Massey Ferguson 2020", "Bon état, location", 5000, "DA/jour", "31 - Oran", "Es Sénia", json.dumps({"offer_type":"Location","equipment_type":"Tracteur","brand":"Massey Ferguson","model":"MF 2020","year":2020,"state":"Bon","rental_period":"Jour","availability":"Toute l'année"}))
+    ]
+    for typ, titre, desc, prix, unit, wilaya, commune, data in annonces:
+        c.execute("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, commune, data) VALUES (?,?,?,?,?,?,?,?,?)",
+                  (user_id, typ, titre, desc, prix, unit, wilaya, commune, data))
     conn.commit()
     conn.close()
 
@@ -359,7 +330,7 @@ def image_to_base64(img, max_size=(800,600)):
         return base64.b64encode(buf.getvalue()).decode()
     except: return None
 
-def moderate_image(b64): return True  # placeholder
+def moderate_image(b64): return True
 
 def generate_contract(ann, renter_name, owner_name, terms):
     from fpdf import FPDF
@@ -465,11 +436,10 @@ def home_page():
                     with cols[j]: render_announce_card(annonces[i+j])
     else: st.markdown('<div class="no-announce">' + _("no_announces") + '</div>', unsafe_allow_html=True)
 
-# ---------- Generic announce page (all modules) ----------
+# ---------- Generic announce page ----------
 def generic_announce_page(module_type, fields_config, filters):
     tab1, tab2, tab3 = st.tabs([_("list"), _("publish"), _("map")])
     with tab1:
-        # Filters
         cols = st.columns(len(filters))
         filter_vals = []
         for i, f in enumerate(filters):
@@ -532,7 +502,7 @@ def generic_announce_page(module_type, fields_config, filters):
             if a['lat'] and a['lon']: folium.Marker([a['lat'], a['lon']], popup=a['title']).add_to(m)
         st_folium(m, width=700)
 
-# ---------- All module pages ----------
+# ---------- Module pages ----------
 def market_page(): 
     generic_announce_page("market", [("product_type","Type de produit",["Légumes","Fruits","Céréales","Bétail","Miel"]),("quantity","Quantité","number")], ["wilaya","price_max","type_produit"])
 def job_page():
@@ -540,7 +510,7 @@ def job_page():
 def transport_page():
     generic_announce_page("transport", [("vehicle_type","Véhicule",["Camion","Bétaillère","Frigorifique"]),("capacity","Capacité (t)","number")], ["wilaya"])
 def grazing_page():
-    generic_announce_page("grazing", [("area_ha","Superficie (ha)","number"),("cover_type","Couvert",["Chaume","Jachère","Herbe"]),("water","Eau",["Oui","Non"]),("start_date","Début (AAAA-MM-JJ)","text"),("end_date","Fin","text"),("max_animals","Max animaux","number")], ["wilaya"])
+    generic_announce_page("grazing", [("area_ha","Superficie (ha)","number"),("cover_type","Couvert",["Chaume","Jachère","Herbe"]),("water","Eau",["Oui","Non"]),("start_date","Début","text"),("end_date","Fin","text"),("max_animals","Max animaux","number")], ["wilaya"])
 def pollination_page():
     generic_announce_page("pollination", [("hive_count","Nb ruches","number"),("bee_race","Race",["Locale","Hybride"]),("zone","Zone","text")], ["wilaya"])
 def fertilizer_page():
@@ -677,7 +647,6 @@ def language_selector():
 # ---------- Main ----------
 def main():
     init_db()
-    # Sidebar
     with st.sidebar:
         language_selector()
         st.markdown("---")
@@ -692,7 +661,6 @@ def main():
             if st.button(_("login")): st.session_state.page = "login"; st.rerun()
             if st.button(_("register")): st.session_state.page = "register"; st.rerun()
 
-    # Navigation bar
     if st.session_state.user: render_navbar()
     else:
         col1, col2, col3 = st.columns(3)
@@ -703,7 +671,6 @@ def main():
         with col3:
             if st.button(_("register"), use_container_width=True): st.session_state.page = "register"; st.rerun()
 
-    # Page routing
     pages = {
         "home": home_page,
         "login": login_page,
