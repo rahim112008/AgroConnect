@@ -229,68 +229,109 @@ apply_css()
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.executescript('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT, phone TEXT UNIQUE, password TEXT,
-            profile_type TEXT, is_verified INTEGER DEFAULT 0,
-            wilaya TEXT, commune TEXT,
-            location_lat REAL, location_lon REAL,
-            documents TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS announcements (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER, type TEXT, title TEXT, description TEXT,
-            price REAL, unit TEXT, wilaya TEXT, commune TEXT,
-            lat REAL, lon REAL, data TEXT, images TEXT,
-            video_base64 TEXT, video_url TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER, receiver_id INTEGER, announcement_id INTEGER,
-            content TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            announcement_id INTEGER, reviewer_id INTEGER,
-            rating INTEGER, comment TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS contracts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            announcement_id INTEGER, renter_id INTEGER, owner_id INTEGER,
-            start_date TEXT, end_date TEXT, terms TEXT, status TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    ''')
-    # Insert test data if empty
+    
+    # Création des tables une par une
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        phone TEXT UNIQUE,
+        password TEXT,
+        profile_type TEXT,
+        is_verified INTEGER DEFAULT 0,
+        wilaya TEXT,
+        commune TEXT,
+        location_lat REAL,
+        location_lon REAL,
+        documents TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        type TEXT,
+        title TEXT,
+        description TEXT,
+        price REAL,
+        unit TEXT,
+        wilaya TEXT,
+        commune TEXT,
+        lat REAL,
+        lon REAL,
+        data TEXT,
+        images TEXT,
+        video_base64 TEXT,
+        video_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id INTEGER,
+        receiver_id INTEGER,
+        announcement_id INTEGER,
+        content TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sender_id) REFERENCES users(id),
+        FOREIGN KEY (receiver_id) REFERENCES users(id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        announcement_id INTEGER,
+        reviewer_id INTEGER,
+        rating INTEGER,
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (announcement_id) REFERENCES announcements(id),
+        FOREIGN KEY (reviewer_id) REFERENCES users(id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        announcement_id INTEGER,
+        renter_id INTEGER,
+        owner_id INTEGER,
+        start_date TEXT,
+        end_date TEXT,
+        terms TEXT,
+        status TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    # Insertion des données de test uniquement si la table announcements est vide
     cnt = c.execute("SELECT COUNT(*) FROM announcements").fetchone()[0]
     if cnt == 0:
-        # test user ANEM
+        # Utilisateur ANEM
         c.execute("INSERT OR IGNORE INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
                   ("Agent ANEM", "0555000001", hashlib.sha256("anem123".encode()).hexdigest(), "ANEM", 1, "16 - Alger", "Alger Centre"))
-        # test user agriculteur
+        # Utilisateur agriculteur
         c.execute("INSERT OR IGNORE INTO users (name, phone, password, profile_type, is_verified, wilaya, commune) VALUES (?,?,?,?,?,?,?)",
                   ("Ali Ferme", "0555123456", hashlib.sha256("123456".encode()).hexdigest(), "Agriculteur", 1, "39 - El Oued", "Guemar"))
-        user_id = c.execute("SELECT id FROM users WHERE phone='0555123456'").fetchone()[0]
-        annonces = [
-            ("market", "Pommes de terre fraîches", "Variété Spunta, 10 tonnes", 45, "DA/kg", "39 - El Oued", "Guemar",
-             json.dumps({"product_type":"Légumes","quantity":10000})),
-            ("grazing", "Chaumes de blé à louer", "50 ha, eau disponible, mai-juillet", 200, "DA/tête/jour", "14 - Tiaret", "Sougueur",
-             json.dumps({"area_ha":50,"cover_type":"Chaume","water":"Oui","start_date":"2026-05-01","end_date":"2026-07-31","max_animals":100})),
-            ("fertilizer", "Fumier ovin composté", "5 tonnes", 3000, "DA/tonne", "17 - Djelfa", "Messaâd",
-             json.dumps({"fertilizer_type":"Fumier ovin","quantity_tons":5})),
-            ("transport", "Camion frigorifique Alger-Médéa", "10 tonnes", 8000, "DA/voyage", "16 - Alger", "El Harrach",
-             json.dumps({"vehicle_type":"Frigorifique","capacity":10})),
-            ("pollination", "20 ruches disponibles", "Race locale, déplacement Béjaïa-Batna", 5000, "DA/ruche/semaine", "06 - Béjaïa", "Akbou",
-             json.dumps({"hive_count":20,"bee_race":"Locale","zone":"Béjaïa-Batna"})),
-            ("equipment", "Tracteur Massey Ferguson 2020", "Bon état, location", 5000, "DA/jour", "31 - Oran", "Es Sénia",
-             json.dumps({"offer_type":"Location","equipment_type":"Tracteur","brand":"Massey Ferguson","model":"MF 2020","year":2020,"state":"Bon","rental_period":"Jour","availability":"Toute l'année"}))
-        ]
-        for typ, titre, desc, prix, unit, wilaya, commune, data in annonces:
-            c.execute("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, commune, data) VALUES (?,?,?,?,?,?,?,?,?)",
-                      (user_id, typ, titre, desc, prix, unit, wilaya, commune, data))
+        
+        # Récupérer l'id de l'utilisateur agriculteur
+        res = c.execute("SELECT id FROM users WHERE phone='0555123456'").fetchone()
+        if res:
+            user_id = res[0]
+            annonces = [
+                ("market", "Pommes de terre fraîches", "Variété Spunta, 10 tonnes", 45, "DA/kg", "39 - El Oued", "Guemar",
+                 json.dumps({"product_type":"Légumes","quantity":10000})),
+                ("grazing", "Chaumes de blé à louer", "50 ha, eau disponible, mai-juillet", 200, "DA/tête/jour", "14 - Tiaret", "Sougueur",
+                 json.dumps({"area_ha":50,"cover_type":"Chaume","water":"Oui","start_date":"2026-05-01","end_date":"2026-07-31","max_animals":100})),
+                ("fertilizer", "Fumier ovin composté", "5 tonnes", 3000, "DA/tonne", "17 - Djelfa", "Messaâd",
+                 json.dumps({"fertilizer_type":"Fumier ovin","quantity_tons":5})),
+                ("transport", "Camion frigorifique Alger-Médéa", "10 tonnes", 8000, "DA/voyage", "16 - Alger", "El Harrach",
+                 json.dumps({"vehicle_type":"Frigorifique","capacity":10})),
+                ("pollination", "20 ruches disponibles", "Race locale, déplacement Béjaïa-Batna", 5000, "DA/ruche/semaine", "06 - Béjaïa", "Akbou",
+                 json.dumps({"hive_count":20,"bee_race":"Locale","zone":"Béjaïa-Batna"})),
+                ("equipment", "Tracteur Massey Ferguson 2020", "Bon état, location", 5000, "DA/jour", "31 - Oran", "Es Sénia",
+                 json.dumps({"offer_type":"Location","equipment_type":"Tracteur","brand":"Massey Ferguson","model":"MF 2020","year":2020,"state":"Bon","rental_period":"Jour","availability":"Toute l'année"}))
+            ]
+            for typ, titre, desc, prix, unit, wilaya, commune, data in annonces:
+                c.execute("INSERT INTO announcements (user_id, type, title, description, price, unit, wilaya, commune, data) VALUES (?,?,?,?,?,?,?,?,?)",
+                          (user_id, typ, titre, desc, prix, unit, wilaya, commune, data))
+    
     conn.commit()
     conn.close()
 
